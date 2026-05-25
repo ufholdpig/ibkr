@@ -189,7 +189,7 @@ class MarketDataProvider:
         return angle
 
     def compute_consolidation(self, closes: List[float], ma_50_values: List[float],
-                              threshold_pct: float = 3.0) -> Dict[str, Optional]:
+                              threshold_pct: float = 3.0) -> dict:
         """Detect consolidation: price staying within +/-threshold_pct of MA50.
 
         Returns dict with is_consolidating, consolidation_days, breakout_detected.
@@ -226,7 +226,7 @@ class MarketDataProvider:
             "breakout_detected": breakout_detected,
         }
 
-    def compute_indicators(self, bars: List[Bar]) -> Dict[str, Optional]:
+    def compute_indicators(self, bars: List[Bar]) -> dict:
         closes = [b.close for b in bars]
         volumes = [float(b.volume) for b in bars]
 

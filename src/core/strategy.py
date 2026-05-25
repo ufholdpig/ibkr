@@ -421,10 +421,12 @@ class StrategyFactory:
             target_symbols: 可选，指定要评估的标的集合。不传时由各策略从 ticker 推导。
             is_paper: 是否为模拟盘（影响实盘卖空限制）
         """
-        # 1. 没有 client 时不产生任何信号
-        if self.client is None:
-            self.logger.warning("StrategyFactory.client 未设置，跳过分析（无交易信号产生）")
+        # 1. 如果数据源强制要求 IBKR 但没有 client，跳过
+        if self.client is None and self.market_data_source == "ibkr":
+            self.logger.warning("StrategyFactory.client 未设置且数据源=ibkr，跳过分析")
             return []
+        if self.client is None and self.market_data_source != "yfinance":
+            self.logger.info("StrategyFactory.client 未设置，使用 yfinance 回退获取数据")
 
         # 2. 收集需要市场数据的策略所关注的标的
         market_data_symbols = set()
