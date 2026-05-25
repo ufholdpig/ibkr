@@ -20,6 +20,7 @@
 | Phase 3 | TradingSignal v3 | `strategy.py` | ✅ 完成 |
 | Phase 3 | OCO 订单 | `orders.py` (place_bracket_order) | ✅ 完成 |
 | Phase 3 | 延迟执行 | `pending_signals.py` | ✅ 完成 |
+| Phase 4 | 配置结构重构 | per-symbol → per-template，删除 strategies 概念 | ✅ 完成 |
 
 ---
 
@@ -316,7 +317,116 @@ Trend entry strategies: ['TREND_ENTRY_VST', 'TREND_ENTRY_CEG', 'TREND_ENTRY_NVDA
 
 ---
 
-## 八、后续工作
+## 八、Phase 4: 配置结构重构 — per-symbol → per-template
+
+> 实施日期：2026-05-25
+> Commit: `84b6b7b`
+
+### 8.1 动机
+
+原有配置以标的为中心，每个 symbol 列出适用的 templates 和 strategies：
+
+```yaml
+watch:
+  symbols:
+    NVDA:
+      cooldown_minutes: 30
+      templates: ["trend_entry", "dip_buy"]
+      strategies: []
+```
+
+问题：
+- 添加新模版时需修改每个标的的配置（N 个 symbol 改 N 处）
+- `strategies` 和 `templates` 概念重叠，维护混乱
+- 难以一眼看出某个模版覆盖了哪些标的
+
+### 8.2 新结构
+
+改为以模版为中心，每个 template 列出绑定的标的：
+
+```yaml
+watch:
+  cooldown_minutes:
+    default: 20
+    F: 15
+    AAPL: 15
+    NVDA: 30
+    AVGO: 30
+    VRT: 30
+
+  templates:
+    dip_buy: [F, AAPL, NVDA, AVGO, VST, CEG, DLR, VRT]
+    ma_buy: [F, AAPL, NVDA, AVGO, DLR, VRT]
+    bounce_sell: [F, AAPL, NVDA, AVGO, VST, CEG, DLR, VRT]
+    trend_entry: [NVDA, AVGO, VST, CEG, VRT]
+    trend_entry_strict: []
+    stop_loss: [NVDA, AVGO, VST, CEG, DLR, VRT, AAPL]
+    value_buy: [NVDA, AVGO, VST, CEG, DLR, VRT, AAPL]
+```
+
+### 8.3 变更文件清单
+
+| 文件 | 变更内容 |
+|------|----------|
+| `config/ibkr.yaml` | watch 段重写为 per-template 结构 |
+| `config/config.py` | 删除 `SymbolWatchConfig`；`WatchConfig` 新增 `templates: dict`, `cooldown_minutes: dict`, `symbol_list` 属性, `get_cooldown()` 方法 |
+| `src/core/strategy.py` | `StrategyFactory` 参数从 `config_dir` + `watch_symbols` 改为 `watch_templates: Dict[str, List[str]]`；`load_all()` 改为遍历 template→symbols |
+| `src/trading/watch_daemon.py` | `WatchDaemon.__init__` 从 `WatchConfig.symbol_list` 推导标的；`_get_cooldown_minutes()` 使用 `WatchConfig.get_cooldown()`；删除 `SymbolWatchConfig` 依赖 |
+| `src/core/signal.py` | `StrategyFactory` 构造改为传 `watch_templates` |
+| `src/core/sandbox.py` | `strategy_dir` 默认路径改为 `strategy/templates` |
+| `src/core/learning.py` | 同上 |
+| `strategy/strategies/` → `strategy/templates/` | 迁移 `stop_loss.yaml`, `conservative_buy.yaml`, `conservative_sell.yaml`, `value_buy.yaml`（添加 `{symbol}` 占位符）；`paper/` 子目录移入 templates/ |
+| `strategy/strategies/` | 整个目录删除 |
+
+### 8.4 WatchConfig 新设计
+
+```python
+@dataclass
+class WatchConfig:
+    templates: dict = field(default_factory=dict)          # {template_name: [symbols]}
+    cooldown_minutes: dict = field(default_factory=lambda: {"default": 20})
+    poll_interval: int = 5
+    indicator_refresh_minutes: int = 30
+    template_dir: str = "strategy/templates"
+    real_cooldown_multiplier: float = 4.0
+
+    @property
+    def symbol_list(self) -> list[str]:
+        """从所有模版绑定中推导唯一标的列表"""
+        ...
+
+    def get_cooldown(self, symbol: str) -> int:
+        """获取标的冷却时间，未配置则用 default"""
+        return self.cooldown_minutes.get(symbol, self.cooldown_minutes.get("default", 20))
+```
+
+### 8.5 StrategyFactory 适配
+
+```python
+class StrategyFactory:
+    def __init__(self, ..., watch_templates: Dict = None):
+        ...
+
+    def load_all(self):
+        for template_name, symbols in self.watch_templates.items():
+            for symbol in symbols:
+                config = self.template_engine.expand(template_name, symbol)
+                if config:
+                    self.yaml_strategies.append(YAMLTemplateStrategy(config))
+```
+
+### 8.6 删除的概念
+
+| 删除项 | 说明 |
+|--------|------|
+| `SymbolWatchConfig` dataclass | 不再需要 per-symbol 配置对象 |
+| `strategy_dir` 配置项 | 统一使用 `template_dir` |
+| `strategies` 配置字段 | 全部转为 templates |
+| `strategy/strategies/` 目录 | 文件已迁入 `strategy/templates/` |
+
+---
+
+## 九、后续工作
 
 | 项目 | 优先级 | 说明 |
 |------|--------|------|
