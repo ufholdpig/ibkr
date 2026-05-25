@@ -1,0 +1,39 @@
+strategy_id: "FUTURES_TREND_{symbol}"
+name: "{symbol} 期货趋势跟踪"
+description: "{symbol} 指数期货趋势策略 — MA排列+动量确认，适用 ES/NQ/MES/MNQ"
+enabled: true
+priority: 25
+weight: 1.0
+state: ACTIVE
+type: futures_trend
+regime_weights:
+  BULL: 1.5
+  BEAR: 0.3
+  SIDEWAYS: 0.8
+signal_factors: ["market_data"]
+conditions:
+  operator: AND
+  rules:
+    - type: ma_stack
+      operator: ">"
+    - type: sma_slope
+      period: 50
+      threshold: 3
+      multiplier: 30
+      operator: ">"
+    - type: rsi
+      operator: ">"
+      threshold: 50
+    - type: volume_spike
+      multiplier: 1.2
+action:
+  type: "LIMIT_BUY"
+  quantity: 1
+  ticker: "{symbol}"
+  price_offset: -0.001
+  tif: "DAY"
+  risk:
+    stop_loss_type: "fixed_pct"
+    stop_loss_pct: 0.02
+    take_profit_pct: 0.06
+    trailing_stop_pct: 0.03

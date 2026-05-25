@@ -1044,16 +1044,20 @@ class IBKRClient:
 
 
 def create_contract(
-    symbol: str, sec_type: str = "STK", exchange: str = "SMART", currency: str = "USD"
+    symbol: str, sec_type: str = "STK", exchange: str = "SMART", currency: str = "USD",
+    expiry: str = "", multiplier: str = "", trading_class: str = "",
 ) -> Contract:
     """
     创建合约对象
 
     Args:
-        symbol: 股票代码 (支持 RY.TO 格式，自动转换为 IBKR 格式)
-        sec_type: 证券类型 (STK, OPT, FUT等)
+        symbol: 代码 (支持 RY.TO 格式，自动转换为 IBKR 格式)
+        sec_type: 证券类型 (STK, FUT, OPT 等)
         exchange: 交易所
         currency: 货币
+        expiry: 到期月 YYYYMM (FUT 必填)
+        multiplier: 合约乘数 (FUT 填写，如 "50")
+        trading_class: 交易类别 (FUT 填写，如 "ES")
 
     Returns:
         Contract: 合约对象
@@ -1076,5 +1080,12 @@ def create_contract(
         contract.currency = currency
 
     contract.secType = sec_type
+
+    if expiry:
+        contract.lastTradeDateOrContractMonth = expiry
+    if multiplier:
+        contract.multiplier = multiplier
+    if trading_class:
+        contract.tradingClass = trading_class
 
     return contract

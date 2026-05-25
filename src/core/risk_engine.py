@@ -22,7 +22,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional, Dict
 from pathlib import Path
 
-from config.config import RiskConfig
+from config.config import RiskConfig, get_instrument_registry
 from src.core.logger import get_logger
 from src.core.paths import get_path, get_data_mode
 
@@ -127,19 +127,32 @@ class RiskEngine:
         self._trades_loaded = True
         self.logger.info("已加载 %d 笔年内交易 (%d 笔今日)", len(self._yearly_trades), len(self._daily_trades))
 
+    def _get_notional_value(self, symbol: str, quantity: int, price: float) -> float:
+        """计算名义价值 = quantity * price * multiplier"""
+        registry = get_instrument_registry()
+        spec = registry.get(symbol)
+        return quantity * price * spec.notional_multiplier
+
+    def _is_futures_symbol(self, symbol: str) -> bool:
+        registry = get_instrument_registry()
+        return registry.get(symbol).is_futures
+
     def precheck_order(self, symbol: str, action: str, quantity: int,
                        price: float = 0.0,
                        positions_map: Dict[str, float] | None = None,
                        net_liquidation: float = 0.0) -> List[RiskCheckResult]:
         results = []
 
-        if self.config.forbid_short_sell:
+        # 期货跳过 TFSA 特有规则（日内冲销、卖空、年度频率）
+        is_fut = self._is_futures_symbol(symbol)
+
+        if not is_fut and self.config.forbid_short_sell:
             results.append(self._check_short_sell(action))
 
-        if self.config.max_trades_per_year > 0:
+        if not is_fut and self.config.max_trades_per_year > 0:
             results.append(self._check_yearly_trades())
 
-        if self.config.forbid_day_trading:
+        if not is_fut and self.config.forbid_day_trading:
             results.append(self._check_day_trading(symbol, action))
 
         pos = positions_map or self._current_positions
@@ -190,7 +203,7 @@ class RiskEngine:
                 rule_name="ORDER_VALUE_LIMIT",
                 message=f"净值 {net_liquidation} 无法计算订单价值占比",
             )
-        order_value = quantity * price
+        order_value = self._get_notional_value(symbol, quantity, price)
         max_value = net_liquidation * (self.config.max_order_value_pct / 100.0)
         if order_value > max_value:
             return RiskCheckResult(
@@ -216,8 +229,10 @@ class RiskEngine:
                 rule_name="POSITION_LIMIT",
                 message=f"净值 {net_liquidation} 无法计算仓位占比",
             )
-        trade_value = quantity * price
-        current_value = positions_map.get(symbol, 0) * price
+        registry = get_instrument_registry()
+        mult = registry.get(symbol).notional_multiplier
+        trade_value = quantity * price * mult
+        current_value = positions_map.get(symbol, 0) * price * mult
         new_value = current_value + trade_value
         new_pct = new_value / net_liquidation
         max_pct = self.config.position_limit_pct / 100.0

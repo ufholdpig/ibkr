@@ -25,9 +25,10 @@ class MarketDataProvider:
       - "yfinance": 仅 yfinance（免费，适合模拟盘）
     """
 
-    def __init__(self, client: IBKRClient, data_source: str = "auto"):
+    def __init__(self, client: IBKRClient, data_source: str = "auto", registry=None):
         self.client = client
         self.data_source = data_source
+        self._registry = registry
 
     # ── 基础行情（实时价格 + 成交量） ──────────────────────────────
 
@@ -58,12 +59,21 @@ class MarketDataProvider:
             )
         return result
 
+    def _resolve_yfinance_symbol(self, symbol: str) -> str:
+        """通过 registry 解析 yfinance ticker（期货使用 ES=F 等格式）"""
+        if self._registry:
+            spec = self._registry.get(symbol)
+            if spec.yfinance_symbol:
+                return spec.yfinance_symbol
+        return symbol
+
     def _fetch_basic_yfinance(self, symbols: List[str]) -> Dict[str, MarketData]:
         import yfinance as yf
         result = {}
         for symbol in symbols:
             try:
-                ticker = yf.Ticker(symbol)
+                yf_sym = self._resolve_yfinance_symbol(symbol)
+                ticker = yf.Ticker(yf_sym)
                 hist = ticker.history(period="1d", interval="1m")
                 if hist.empty:
                     logger.warning(f"yfinance [{symbol}] 返回空数据")
@@ -97,13 +107,14 @@ class MarketDataProvider:
 
     def _fetch_historical_yfinance(self, symbol: str, days: int) -> List[Bar]:
         import yfinance as yf
-        df = yf.download(symbol, period=f"{days}d", interval="1d", progress=False, auto_adjust=True)
+        yf_sym = self._resolve_yfinance_symbol(symbol)
+        df = yf.download(yf_sym, period=f"{days}d", interval="1d", progress=False, auto_adjust=True)
         if df.empty:
             logger.warning(f"yfinance [{symbol}] 下载历史数据为空")
             return []
 
         if hasattr(df.columns, 'names') and df.columns.names == ['Price', 'Ticker']:
-            single = df.xs(symbol, level=1, axis=1)
+            single = df.xs(yf_sym, level=1, axis=1)
         else:
             single = df
 

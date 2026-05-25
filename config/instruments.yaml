@@ -1,0 +1,43 @@
+# 合约注册表 — 非股票资产的交易所元数据
+# 未在此定义的 symbol 默认为 STK/SMART/USD/multiplier=1
+
+instruments:
+  ES:
+    sec_type: FUT
+    exchange: CME
+    currency: USD
+    multiplier: 50
+    trading_class: ES
+    roll_rule: quarterly
+    front_month: "202506"
+    yfinance_symbol: "ES=F"
+
+  MES:
+    sec_type: FUT
+    exchange: CME
+    currency: USD
+    multiplier: 5
+    trading_class: MES
+    roll_rule: quarterly
+    front_month: "202506"
+    yfinance_symbol: "MES=F"
+
+  NQ:
+    sec_type: FUT
+    exchange: CME
+    currency: USD
+    multiplier: 20
+    trading_class: NQ
+    roll_rule: quarterly
+    front_month: "202506"
+    yfinance_symbol: "NQ=F"
+
+  MNQ:
+    sec_type: FUT
+    exchange: CME
+    currency: USD
+    multiplier: 2
+    trading_class: MNQ
+    roll_rule: quarterly
+    front_month: "202506"
+    yfinance_symbol: "MNQ=F"

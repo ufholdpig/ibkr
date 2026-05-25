@@ -503,7 +503,94 @@ gantt
 
 ---
 
-## 七、测试计划
+## 七、信号 → 订单数据流
+
+期货策略 (如 `futures_trend.yaml`) 产生的信号与股票策略走同一条数据管线，不做特殊分流。
+
+### 完整流程
+
+```
+watch_daemon.run()
+  │
+  ├─ 1) StrategyFactory 加载 futures_trend 模版，展开为 FUTURES_TREND_ES 等策略
+  │
+  ├─ 2) MarketDataProvider.fetch_historical("ES")
+  │     └─ _resolve_yfinance_symbol() → 使用 "ES=F" 从 yfinance 拉取日K
+  │
+  ├─ 3) 条件评估通过 → 生成 TradingSignal
+  │
+  ├─ 4) convert_signal_to_dict() 序列化
+  │
+  ├─ 5) 写入信号文件:
+  │     data/<mode>/signals/signal_YYYYMMDD.json
+  │     ├─ signals_pre_market[]   (盘前/盘后触发)
+  │     └─ signals_intra_day[]    (盘中触发)
+  │
+  ├─ 6) 调用执行器:
+  │     ├─ PreMarketExecutor  → 读取 signals_pre_market
+  │     └─ IntraDayExecutor   → 读取 signals_intra_day
+  │
+  ├─ 7) put_order.process_signals()
+  │     ├─ get_instrument_registry().get("ES")  → InstrumentSpec(FUT, CME, 50...)
+  │     ├─ create_contract("ES", sec_type="FUT", expiry="202506", multiplier="50", ...)
+  │     ├─ RiskEngine.precheck_order("ES", ...)
+  │     │   ├─ _is_futures_symbol() == True → 跳过 TFSA 规则
+  │     │   └─ _get_notional_value() = qty * price * 50  (仓位/金额检查)
+  │     └─ place_order(client, order, contract)
+  │
+  └─ 8) 订单结果写入:
+        data/<mode>/orders/order_YYYYMMDD.json
+        ├─ orders_pre_market[]
+        └─ orders_intra_day[]
+```
+
+### 文件路径说明
+
+| 数据类型 | Paper 模式路径 | Real 模式路径 |
+|---------|---------------|--------------|
+| 信号文件 | `data/paper/signals/signal_YYYYMMDD.json` | `data/real/signals/signal_YYYYMMDD.json` |
+| 订单文件 | `data/paper/orders/order_YYYYMMDD.json` | `data/real/orders/order_YYYYMMDD.json` |
+| 报告文件 | `data/paper/reports/pre-report_YYYYMMDD.md` | `data/real/reports/pre-report_YYYYMMDD.md` |
+
+`<mode>` 由 `resolve_data_mode(account_id)` 决定：DU 前缀 = paper，其余 = real。
+
+### 信号 JSON 结构 (期货示例)
+
+```json
+{
+  "generated": "2026-05-25 09:00:00",
+  "signals_pre_market": [
+    {
+      "strategy_name": "ES 期货趋势跟踪",
+      "strategy_id": "FUTURES_TREND_ES",
+      "symbol": "ES",
+      "action": "BUY",
+      "quantity": 1,
+      "target_price": 5380.25,
+      "reason": "MA stack bullish + slope confirmed",
+      "stop_loss_type": "fixed_pct",
+      "stop_loss_pct": 0.02,
+      "take_profit_pct": 0.06,
+      "trailing_stop_pct": 0.03,
+      "processed": false
+    }
+  ]
+}
+```
+
+### 与股票信号的区别
+
+| 维度 | 股票 | 期货 |
+|------|------|------|
+| symbol 解析 | 直接使用或 .TO 后缀处理 | registry 提供 exchange/expiry/multiplier |
+| yfinance ticker | 原样 (如 `NVDA`) | 映射为 `ES=F` |
+| TFSA 风控 | 全量执行 (short_sell, day_trading, yearly_limit) | 跳过 TFSA 规则 |
+| notional 计算 | qty × price | qty × price × multiplier |
+| Contract 构造 | `create_contract("NVDA")` | `create_contract("ES", sec_type="FUT", expiry=..., multiplier=..., trading_class=...)` |
+
+---
+
+## 八、测试计划
 
 1. **单元测试**：InstrumentRegistry 加载 + 默认值回退
 2. **集成测试**：Paper 环境提交 MES 订单验证合约构造

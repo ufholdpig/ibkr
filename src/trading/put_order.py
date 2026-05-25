@@ -15,6 +15,7 @@ from src.core.client import IBKRClient, create_contract
 from src.core.orders import place_order, Order
 from src.core.risk_engine import RiskEngine
 from src.core.logger import get_logger
+from config.config import get_instrument_registry
 
 logger = get_logger(__name__)
 
@@ -112,25 +113,43 @@ def build_and_submit_order(client: IBKRClient, signal: dict,
         ib_action = "BUY" if action == "BUY" else "SELL"
 
         try:
-            sec_type = "STK"
-            exchange = "SMART"
-            currency = "USD"
+            registry = get_instrument_registry()
+            spec = registry.get(symbol)
 
-            if "." in symbol:
+            if spec.is_futures:
+                sym = symbol
+                contract = create_contract(
+                    symbol=sym,
+                    sec_type=spec.sec_type,
+                    exchange=spec.exchange,
+                    currency=spec.currency,
+                    expiry=spec.front_month,
+                    multiplier=str(spec.multiplier),
+                    trading_class=spec.trading_class,
+                )
+            elif "." in symbol:
                 parts = symbol.split(".")
                 sym = parts[0]
+                sec_type = "STK"
+                exchange = "SMART"
+                currency = "USD"
                 if parts[1] == "TO":
                     exchange = "TSE"
                     currency = "CAD"
+                contract = create_contract(
+                    symbol=sym,
+                    sec_type=sec_type,
+                    exchange=exchange,
+                    currency=currency,
+                )
             else:
                 sym = symbol
-
-            contract = create_contract(
-                symbol=sym,
-                sec_type=sec_type,
-                exchange=exchange,
-                currency=currency,
-            )
+                contract = create_contract(
+                    symbol=sym,
+                    sec_type=spec.sec_type,
+                    exchange=spec.exchange,
+                    currency=spec.currency,
+                )
 
             order_obj = Order(
                 order_id=0,

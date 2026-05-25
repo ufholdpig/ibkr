@@ -62,6 +62,7 @@ ibkr:
       trend_entry_strict: []
       stop_loss: [NVDA, AVGO, VST, CEG, DLR, VRT, AAPL]
       value_buy: [NVDA, AVGO, VST, CEG, DLR, VRT, AAPL]
+      futures_trend: []
 
   # TFSA 风控引擎配置
   # Paper 测试时 fail_closed=false，实盘部署前设为 true

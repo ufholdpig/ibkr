@@ -82,6 +82,83 @@ class RiskConfig:
 
 
 @dataclass
+class InstrumentSpec:
+    """合约规格 — 统一描述股票/期货的交易所元数据"""
+    symbol: str
+    sec_type: str = "STK"
+    exchange: str = "SMART"
+    currency: str = "USD"
+    multiplier: int = 1
+    trading_class: str = ""
+    front_month: str = ""
+    roll_rule: str = ""
+    yfinance_symbol: str = ""
+
+    @property
+    def is_futures(self) -> bool:
+        return self.sec_type == "FUT"
+
+    @property
+    def notional_multiplier(self) -> int:
+        return self.multiplier
+
+
+class InstrumentRegistry:
+    """合约注册表 — 从 instruments.yaml 加载，未注册 symbol 返回 STK 默认值"""
+
+    def __init__(self, config_path: str = None):
+        self._specs: dict = {}
+        if config_path:
+            self._load(config_path)
+
+    def _load(self, path: str):
+        p = Path(path)
+        if not p.exists():
+            return
+        with open(p, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        if not data or "instruments" not in data:
+            return
+        for sym, cfg in data["instruments"].items():
+            self._specs[sym.upper()] = InstrumentSpec(
+                symbol=sym.upper(),
+                sec_type=cfg.get("sec_type", "STK"),
+                exchange=cfg.get("exchange", "SMART"),
+                currency=cfg.get("currency", "USD"),
+                multiplier=int(cfg.get("multiplier", 1)),
+                trading_class=cfg.get("trading_class", ""),
+                front_month=str(cfg.get("front_month", "")),
+                roll_rule=cfg.get("roll_rule", ""),
+                yfinance_symbol=cfg.get("yfinance_symbol", ""),
+            )
+
+    def get(self, symbol: str) -> InstrumentSpec:
+        """查询合约规格，不存在则返回 STK 默认值"""
+        return self._specs.get(symbol.upper(), InstrumentSpec(symbol=symbol.upper()))
+
+    @property
+    def futures_symbols(self) -> list:
+        return [s for s, spec in self._specs.items() if spec.is_futures]
+
+    @property
+    def all_symbols(self) -> list:
+        return list(self._specs.keys())
+
+
+_INSTRUMENT_REGISTRY: Optional[InstrumentRegistry] = None
+
+
+def get_instrument_registry() -> InstrumentRegistry:
+    """获取全局合约注册表（单例，延迟加载）"""
+    global _INSTRUMENT_REGISTRY
+    if _INSTRUMENT_REGISTRY is None:
+        project_root = Path(__file__).parent.parent
+        instruments_path = project_root / "config" / "instruments.yaml"
+        _INSTRUMENT_REGISTRY = InstrumentRegistry(str(instruments_path))
+    return _INSTRUMENT_REGISTRY
+
+
+@dataclass
 class IBKRConfig:
     """IBKR 完整配置"""
     market_data_source: str = "auto"  # "auto", "ibkr", "yfinance"
