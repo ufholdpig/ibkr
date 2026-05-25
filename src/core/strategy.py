@@ -48,12 +48,14 @@ class MarketData:
     # --- 趋势跟踪指标 ---
     ma_50_slope: Optional[float] = None
     ma_200_slope: Optional[float] = None
+    ma_200_slope_prev: Optional[float] = None
     ma_spread_ratio: Optional[float] = None
     is_consolidating: Optional[bool] = None
     consolidation_days: Optional[int] = None
     volume_ratio: Optional[float] = None
     breakout_detected: Optional[bool] = None
     retrace_to_ma50: Optional[bool] = None
+    days_from_high: Optional[int] = None
     # --- 衍生涨跌幅 ---
     change_1d_pct: Optional[float] = None
     change_5d_pct: Optional[float] = None
@@ -137,6 +139,8 @@ class ConditionNode:
     period: Optional[int] = None
     multiplier: Optional[float] = None
     min_balance: Optional[float] = None
+    mode: Optional[str] = None
+    flat_threshold: Optional[float] = None
 
 
 def _parse_condition_tree(raw) -> ConditionNode:
@@ -171,6 +175,8 @@ def _parse_condition_tree(raw) -> ConditionNode:
             period=raw.get("period"),
             multiplier=raw.get("multiplier"),
             min_balance=raw.get("min_balance"),
+            mode=raw.get("mode"),
+            flat_threshold=raw.get("flat_threshold"),
         )
 
     return ConditionNode(type="always")

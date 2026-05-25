@@ -11,6 +11,7 @@ from src.core.conditions.consolidation_breakout import ConsolidationBreakoutEval
 from src.core.conditions.retrace_breakout import RetraceBreakoutEvaluator
 from src.core.conditions.fib_time import FibTimeEvaluator
 from src.core.conditions.volume_spike import VolumeSpikeEvaluator
+from src.core.conditions.ma_slope_turn import MASlopeTurnEvaluator
 
 
 def _make_md(**kwargs) -> MarketData:
@@ -227,3 +228,77 @@ class TestVolumeSpike:
         md = _make_md(volume=1000000, volume_avg_20d=None)
         node = ConditionNode(type="volume_spike", multiplier=1.3)
         assert VolumeSpikeEvaluator().evaluate(node, _make_ctx(md)) is False
+
+
+# =============================================================================
+# fib_time pullback mode tests
+# =============================================================================
+
+
+class TestFibTimePullback:
+    def test_pullback_days_match_fib(self):
+        md = _make_md(days_from_high=8)
+        node = ConditionNode(type="fib_time", mode="pullback", threshold=2)
+        assert FibTimeEvaluator().evaluate(node, _make_ctx(md)) is True
+
+    def test_pullback_days_within_tolerance(self):
+        md = _make_md(days_from_high=20)  # 21 - 1 = within tolerance of 2
+        node = ConditionNode(type="fib_time", mode="pullback", threshold=2)
+        assert FibTimeEvaluator().evaluate(node, _make_ctx(md)) is True
+
+    def test_pullback_days_no_match(self):
+        md = _make_md(days_from_high=17)
+        node = ConditionNode(type="fib_time", mode="pullback", threshold=2)
+        assert FibTimeEvaluator().evaluate(node, _make_ctx(md)) is False
+
+    def test_pullback_zero_days(self):
+        md = _make_md(days_from_high=0)
+        node = ConditionNode(type="fib_time", mode="pullback", threshold=2)
+        assert FibTimeEvaluator().evaluate(node, _make_ctx(md)) is False
+
+    def test_pullback_none(self):
+        md = _make_md(days_from_high=None)
+        node = ConditionNode(type="fib_time", mode="pullback", threshold=2)
+        assert FibTimeEvaluator().evaluate(node, _make_ctx(md)) is False
+
+    def test_default_mode_is_consolidation(self):
+        md = _make_md(consolidation_days=13, days_from_high=17)
+        node = ConditionNode(type="fib_time", threshold=2)
+        assert FibTimeEvaluator().evaluate(node, _make_ctx(md)) is True
+
+
+# =============================================================================
+# ma_slope_turn tests
+# =============================================================================
+
+
+class TestMASlopeTurn:
+    def test_turn_detected(self):
+        md = _make_md(ma_200_slope=2.5, ma_200_slope_prev=0.5)
+        node = ConditionNode(type="ma_slope_turn", period=200, flat_threshold=1.0)
+        assert MASlopeTurnEvaluator().evaluate(node, _make_ctx(md)) is True
+
+    def test_already_positive_before(self):
+        md = _make_md(ma_200_slope=3.0, ma_200_slope_prev=2.0)
+        node = ConditionNode(type="ma_slope_turn", period=200, flat_threshold=1.0)
+        assert MASlopeTurnEvaluator().evaluate(node, _make_ctx(md)) is False
+
+    def test_still_flat(self):
+        md = _make_md(ma_200_slope=0.8, ma_200_slope_prev=-0.5)
+        node = ConditionNode(type="ma_slope_turn", period=200, flat_threshold=1.0)
+        assert MASlopeTurnEvaluator().evaluate(node, _make_ctx(md)) is False
+
+    def test_negative_to_flat(self):
+        md = _make_md(ma_200_slope=0.5, ma_200_slope_prev=-2.0)
+        node = ConditionNode(type="ma_slope_turn", period=200, flat_threshold=1.0)
+        assert MASlopeTurnEvaluator().evaluate(node, _make_ctx(md)) is False
+
+    def test_none_slopes(self):
+        md = _make_md(ma_200_slope=None, ma_200_slope_prev=None)
+        node = ConditionNode(type="ma_slope_turn", period=200)
+        assert MASlopeTurnEvaluator().evaluate(node, _make_ctx(md)) is False
+
+    def test_custom_flat_threshold(self):
+        md = _make_md(ma_200_slope=3.0, ma_200_slope_prev=1.8)
+        node = ConditionNode(type="ma_slope_turn", period=200, flat_threshold=2.0)
+        assert MASlopeTurnEvaluator().evaluate(node, _make_ctx(md)) is True

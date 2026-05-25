@@ -249,6 +249,10 @@ class MarketDataProvider:
         # Trend-following indicators
         ma_50_slope = self.compute_sma_slope(closes, 50, lookback=10)
         ma_200_slope = self.compute_sma_slope(closes, 200, lookback=10)
+        # Previous MA200 slope (shifted back 5 bars) for direction-change detection
+        ma_200_slope_prev = None
+        if len(closes) >= 215:
+            ma_200_slope_prev = self.compute_sma_slope(closes[:-5], 200, lookback=10)
 
         ma_spread_ratio = None
         if ma_50 is not None and ma_200 is not None and closes[-1] != 0:
@@ -278,6 +282,14 @@ class MarketDataProvider:
             deviation_pct = abs(closes[-1] - ma_50) / closes[-1] * 100
             retrace_to_ma50 = deviation_pct <= 3.0
 
+        # Days from recent high (within lookback window)
+        days_from_high = None
+        if len(closes) >= 5:
+            lookback = min(60, len(closes))
+            recent_closes = closes[-lookback:]
+            high_idx = recent_closes.index(max(recent_closes))
+            days_from_high = lookback - 1 - high_idx
+
         return {
             "ma_20": self.compute_sma(closes, 20),
             "ma_50": ma_50,
@@ -289,12 +301,14 @@ class MarketDataProvider:
             "change_20d_pct": change_20d,
             "ma_50_slope": ma_50_slope,
             "ma_200_slope": ma_200_slope,
+            "ma_200_slope_prev": ma_200_slope_prev,
             "ma_spread_ratio": ma_spread_ratio,
             "is_consolidating": consolidation_info["is_consolidating"],
             "consolidation_days": consolidation_info["consolidation_days"],
             "breakout_detected": consolidation_info["breakout_detected"],
             "volume_ratio": volume_ratio,
             "retrace_to_ma50": retrace_to_ma50,
+            "days_from_high": days_from_high,
         }
 
     def enrich(self, market_data_list: List[MarketData]) -> List[MarketData]:

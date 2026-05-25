@@ -23,12 +23,10 @@ conditions:
       threshold: 5
       multiplier: 45
       operator: ">"
-    # 条件3: MA200 由走平转上（>5°）
-    - type: sma_slope
+    # 条件3: MA200 由走平转上（斜率从 ≤1° 变为 >1°）
+    - type: ma_slope_turn
       period: 200
-      threshold: 5
-      multiplier: 90
-      operator: ">"
+      flat_threshold: 1.0
     # 条件4: MA50/MA200 间距紧凑（< 5%）
     - type: ma_spread
       operator: "<"

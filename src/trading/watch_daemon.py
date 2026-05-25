@@ -30,6 +30,7 @@ from src.core.performance import PerformanceTracker
 from src.core.models import StrategyResult
 from src.core.strategy import StrategyFactory
 from src.core.signal import convert_signal_to_dict
+from src.core.pending_signals import PendingSignalStore
 from config.config import load_config, WatchConfig, RiskConfig
 
 logger = get_logger(__name__)
@@ -129,6 +130,8 @@ class WatchDaemon:
         self._notify_fail_count = 0
         self._notification_thread: threading.Thread | None = None
         self._notification_lock = threading.Lock()
+
+        self.pending_signal_store = PendingSignalStore()
 
         self._ibkr_client = None
         self._connect_ibkr_client()
@@ -590,12 +593,19 @@ class WatchDaemon:
                         continue
 
                 is_paper = getattr(self.risk_engine, '_is_paper', True) if self.risk_engine else True
+
+                # Phase 1: 检查到期的延迟信号并执行
+                ready_pending = self.pending_signal_store.get_ready_signals()
+                if ready_pending:
+                    self.logger.info(f"执行 {len(ready_pending)} 个到期延迟信号")
+                    self._batch_submit_orders(ready_pending)
+
+                # Phase 2: 生成新信号
                 signals = self.factory.analyze(
                     target_symbols=set(self.symbols), is_paper=is_paper
                 )
                 
-                # 收集所有有效信号，最后一次性 execute
-                pending_signal_dicts = []
+                immediate_signals = []
                 
                 for signal in signals:
                     direction = signal.action.value if hasattr(signal.action, 'value') else signal.action
@@ -619,11 +629,24 @@ class WatchDaemon:
                         f"strategy={signal_dict['strategy_id']} "
                         f"reason={signal_dict['reason']}"
                     )
-                    pending_signal_dicts.append(signal_dict)
+
+                    # Phase 3: 延迟信号存入 pending store，立即信号直接提交
+                    delay_days = getattr(signal, 'entry_delay_days', 0) or 0
+                    if delay_days > 0:
+                        self.pending_signal_store.add(signal_dict, delay_days=delay_days)
+                        self.logger.info(
+                            f"延迟信号已存入: {signal.symbol} {delay_days}天后执行"
+                        )
+                    else:
+                        immediate_signals.append(signal_dict)
                 
-                # 批量写入 signal JSON，只调一次 execute()
-                if pending_signal_dicts:
-                    self._batch_submit_orders(pending_signal_dicts)
+                if immediate_signals:
+                    self._batch_submit_orders(immediate_signals)
+
+                # 定期清理过期的 pending signals (每 100 轮)
+                total_heartbeat = sum(self.heartbeat_counters.values())
+                if total_heartbeat > 0 and total_heartbeat % 100 == 0:
+                    self.pending_signal_store.cleanup(max_age_days=7)
 
                 for symbol in self.symbols:
                     self.heartbeat_counters[symbol] += 1
