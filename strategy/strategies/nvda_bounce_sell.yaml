@@ -1,0 +1,42 @@
+strategy_id: "NVDA_BOUNCE_SELL_001"
+name: "NVDA反弹卖出"
+description: "NVDA明显超买或财报后急涨时卖出5股，锁定利润"
+enabled: true
+priority: 15
+weight: 1.0
+state: ACTIVE
+type: bounce_sell
+optimization:
+  enabled: false
+regime_weights:
+  BULL: 1.0
+  BEAR: 1.0
+  SIDEWAYS: 1.0
+signal_factors: ["market_data"]
+conditions:
+  operator: OR
+  rules:
+    - type: rsi
+      operator: ">"
+      threshold: 78
+    - type: change_pct
+      period: 5
+      operator: ">"
+      threshold: 8.0
+    - operator: AND
+      rules:
+        - type: price_vs_ma
+          period: 50
+          operator: ">"
+        - type: random
+          threshold: 0.15
+action:
+  type: "MARKET_SELL"
+  quantity: 5
+  ticker: "NVDA"
+  tif: "DAY"
+metadata:
+  author: "Hermes Agent"
+  created_at: "2026-05-18"
+  version: "1.0.0"
+  tags: ["nvda", "ai-compute", "profit-taking"]

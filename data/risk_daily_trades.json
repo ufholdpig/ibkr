@@ -1,0 +1,450 @@
+{
+  "date": "2026-05-18",
+  "trades": [
+    {
+      "time": "2026-05-18T09:30:40",
+      "symbol": "F",
+      "action": "SELL"
+    },
+    {
+      "time": "2026-05-18T09:33:24",
+      "symbol": "AAPL",
+      "action": "SELL"
+    },
+    {
+      "time": "2026-05-18T09:51:15",
+      "symbol": "AAPL",
+      "action": "SELL"
+    },
+    {
+      "time": "2026-05-18T10:01:11",
+      "symbol": "F",
+      "action": "SELL"
+    },
+    {
+      "time": "2026-05-18T10:06:40",
+      "symbol": "AAPL",
+      "action": "SELL"
+    },
+    {
+      "time": "2026-05-18T10:16:14",
+      "symbol": "F",
+      "action": "SELL"
+    },
+    {
+      "time": "2026-05-18T10:21:45",
+      "symbol": "AAPL",
+      "action": "SELL"
+    },
+    {
+      "time": "2026-05-18T10:35:02",
+      "symbol": "TSLA",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T10:35:05",
+      "symbol": "AAPL",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T10:38:59",
+      "symbol": "AAPL",
+      "action": "SELL"
+    },
+    {
+      "time": "2026-05-18T10:54:09",
+      "symbol": "AAPL",
+      "action": "SELL"
+    },
+    {
+      "time": "2026-05-18T11:09:53",
+      "symbol": "AAPL",
+      "action": "SELL"
+    },
+    {
+      "time": "2026-05-18T11:26:55",
+      "symbol": "AAPL",
+      "action": "SELL"
+    },
+    {
+      "time": "2026-05-18T11:35:15",
+      "symbol": "GOOGL",
+      "action": "SELL"
+    },
+    {
+      "time": "2026-05-18T11:41:57",
+      "symbol": "AAPL",
+      "action": "SELL"
+    },
+    {
+      "time": "2026-05-18T11:57:35",
+      "symbol": "AAPL",
+      "action": "SELL"
+    },
+    {
+      "time": "2026-05-18T12:13:33",
+      "symbol": "AAPL",
+      "action": "SELL"
+    },
+    {
+      "time": "2026-05-18T12:35:24",
+      "symbol": "AMZN",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T12:35:28",
+      "symbol": "NVDA",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T12:55:04",
+      "symbol": "VST",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T12:55:06",
+      "symbol": "CEG",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T12:55:09",
+      "symbol": "DLR",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T12:55:22",
+      "symbol": "NVDA",
+      "action": "SELL"
+    },
+    {
+      "time": "2026-05-18T12:59:48",
+      "symbol": "AAPL",
+      "action": "SELL"
+    },
+    {
+      "time": "2026-05-18T12:59:51",
+      "symbol": "VRT",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T13:15:09",
+      "symbol": "VST",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T13:15:09",
+      "symbol": "CEG",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T13:15:12",
+      "symbol": "DLR",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T13:25:12",
+      "symbol": "VRT",
+      "action": "SELL"
+    },
+    {
+      "time": "2026-05-18T13:25:37",
+      "symbol": "NVDA",
+      "action": "SELL"
+    },
+    {
+      "time": "2026-05-18T13:25:50",
+      "symbol": "AVGO",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T13:26:46",
+      "symbol": "AVGO",
+      "action": "SELL"
+    },
+    {
+      "time": "2026-05-18T13:29:56",
+      "symbol": "VRT",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T13:35:11",
+      "symbol": "VST",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T13:35:11",
+      "symbol": "CEG",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T13:35:13",
+      "symbol": "DLR",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T13:35:38",
+      "symbol": "CEG",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T13:35:41",
+      "symbol": "VRT",
+      "action": "SELL"
+    },
+    {
+      "time": "2026-05-18T13:45:41",
+      "symbol": "AAPL",
+      "action": "SELL"
+    },
+    {
+      "time": "2026-05-18T13:55:18",
+      "symbol": "VST",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T13:55:19",
+      "symbol": "CEG",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T13:55:20",
+      "symbol": "DLR",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T13:55:50",
+      "symbol": "NVDA",
+      "action": "SELL"
+    },
+    {
+      "time": "2026-05-18T13:55:52",
+      "symbol": "AVGO",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T13:57:17",
+      "symbol": "AVGO",
+      "action": "SELL"
+    },
+    {
+      "time": "2026-05-18T14:00:03",
+      "symbol": "VRT",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T14:15:20",
+      "symbol": "VST",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T14:15:22",
+      "symbol": "CEG",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T14:15:24",
+      "symbol": "DLR",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T14:25:55",
+      "symbol": "AVGO",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T14:26:27",
+      "symbol": "VRT",
+      "action": "SELL"
+    },
+    {
+      "time": "2026-05-18T14:27:16",
+      "symbol": "NVDA",
+      "action": "SELL"
+    },
+    {
+      "time": "2026-05-18T14:27:29",
+      "symbol": "AVGO",
+      "action": "SELL"
+    },
+    {
+      "time": "2026-05-18T14:30:07",
+      "symbol": "VRT",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T14:35:26",
+      "symbol": "VST",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T14:35:28",
+      "symbol": "CEG",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T14:35:30",
+      "symbol": "DLR",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T14:35:35",
+      "symbol": "F",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T14:35:51",
+      "symbol": "VRT",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T14:35:55",
+      "symbol": "DLR",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T14:47:01",
+      "symbol": "F",
+      "action": "SELL"
+    },
+    {
+      "time": "2026-05-18T14:50:43",
+      "symbol": "F",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T14:55:35",
+      "symbol": "VST",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T14:55:36",
+      "symbol": "CEG",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T14:55:37",
+      "symbol": "DLR",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T14:58:50",
+      "symbol": "NVDA",
+      "action": "SELL"
+    },
+    {
+      "time": "2026-05-18T15:00:08",
+      "symbol": "VRT",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T15:05:44",
+      "symbol": "F",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T15:15:36",
+      "symbol": "VST",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T15:15:37",
+      "symbol": "CEG",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T15:16:17",
+      "symbol": "DLR",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T15:20:51",
+      "symbol": "F",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T15:27:34",
+      "symbol": "AVGO",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T15:29:25",
+      "symbol": "NVDA",
+      "action": "SELL"
+    },
+    {
+      "time": "2026-05-18T15:30:11",
+      "symbol": "VRT",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T15:35:06",
+      "symbol": "F",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T15:35:10",
+      "symbol": "VST",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T15:35:38",
+      "symbol": "VST",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T15:35:39",
+      "symbol": "CEG",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T15:36:17",
+      "symbol": "F",
+      "action": "SELL"
+    },
+    {
+      "time": "2026-05-18T15:36:20",
+      "symbol": "DLR",
+      "action": "BUY"
+    },
+    {
+      "time": "2026-05-18T15:51:19.911270",
+      "symbol": "F",
+      "action": "SELL",
+      "quantity": 20.0,
+      "price": 13.09,
+      "strategy_id": ""
+    },
+    {
+      "time": "2026-05-18T15:55:41.107707",
+      "symbol": "VST",
+      "action": "BUY",
+      "quantity": 10.0,
+      "price": 136.51,
+      "strategy_id": ""
+    },
+    {
+      "time": "2026-05-18T15:55:41.902956",
+      "symbol": "CEG",
+      "action": "BUY",
+      "quantity": 5.0,
+      "price": 262.1,
+      "strategy_id": ""
+    },
+    {
+      "time": "2026-05-18T15:56:26.143018",
+      "symbol": "DLR",
+      "action": "BUY",
+      "quantity": 10.0,
+      "price": 188.04,
+      "strategy_id": ""
+    },
+    {
+      "time": "2026-05-18T15:57:39.378032",
+      "symbol": "AVGO",
+      "action": "SELL",
+      "quantity": 3.0,
+      "price": 420.36,
+      "strategy_id": ""
+    }
+  ]
+}

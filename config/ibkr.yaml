@@ -1,0 +1,90 @@
+# IBKR Gateway 连接配置
+# 所有参数均可通过环境变量覆盖
+# 注意：端口号与账户类型无关，仅用于本地连接 IB Gateway
+# 4001/4002 为常用端口，可根据实际 IB Gateway 配置调整
+
+ibkr:
+  # 市场数据源: "auto" (IBKR优先, 失败自动回退yfinance), "ibkr", "yfinance"
+  market_data_source: "yfinance"
+  gateway:
+    #host: "127.0.0.1"
+    host: "192.168.2.18"
+    port: 4002  # IB Gateway (4001=实盘, 4002=Paper)
+    client_id: 0  # 由 SessionManager 自动管理（0 表示自动分配）
+    timeout: 15
+    max_retries: 3
+    retry_delay: 2
+    account_id: "DU4011059"  # 子账号 ID（Paper=DU4011059，实盘=实盘账号）
+  
+  # 报告目录配置
+  reports:
+    # 自动根据账户类型选择目录
+    auto_select: true
+    
+    # 默认目录（auto_select=false 时使用）
+    default_base: "reports"
+    
+    # 账户类型特定目录
+    real:
+      base: "reports/real"
+      pre_market: "reports/real/pre_market"
+      intra_day: "reports/real/intra_day"
+      post_market: "reports/real/post_market"
+    
+    paper:
+      base: "reports/paper"
+      pre_market: "reports/paper/pre_market"
+      intra_day: "reports/paper/intra_day"
+      post_market: "reports/paper/post_market"
+
+  # Watch 守护进程配置
+  # symbols: 每只股票独立指定策略文件和冷却时间
+  watch:
+    poll_interval: 5
+    indicator_refresh_minutes: 30
+    strategy_dir: "strategy/strategies"
+    # 实盘冷却倍率: Paper 冷却 x 此值 = 实盘冷却 (4x = 15min→60min, 30min→120min)
+    # Paper 保持高频方便测试, 实盘大幅降低信号频率避免信号文件噪声
+    real_cooldown_multiplier: 4
+    symbols:
+      F:
+        cooldown_minutes: 15
+        strategies: ["f_dip_buy.yaml", "f_ma_buy.yaml", "f_bounce_sell.yaml"]
+      AAPL:
+        cooldown_minutes: 15
+        strategies: ["aapl_dip_buy.yaml", "aapl_ma_buy.yaml", "aapl_bounce_sell.yaml"]
+
+      # AI储能 - 优先推荐（52周低点附近 + Forward PE低 + 目标空间大）
+      VST:
+        cooldown_minutes: 20
+        strategies: ["vst_dip_buy.yaml", "vst_ma_buy.yaml", "vst_bounce_sell.yaml"]
+      CEG:
+        cooldown_minutes: 20
+        strategies: ["ceg_dip_buy.yaml", "ceg_ma_buy.yaml", "ceg_bounce_sell.yaml"]
+
+      # AI算力 - 等待回调建仓
+      NVDA:
+        cooldown_minutes: 30
+        strategies: ["nvda_dip_buy.yaml", "nvda_ma_buy.yaml", "nvda_bounce_sell.yaml"]
+      AVGO:
+        cooldown_minutes: 30
+        strategies: ["avgo_dip_buy.yaml", "avgo_ma_buy.yaml", "avgo_bounce_sell.yaml"]
+
+      # AI基础设施 - 防御性持仓
+      DLR:
+        cooldown_minutes: 20
+        strategies: ["dlr_dip_buy.yaml", "dlr_ma_buy.yaml", "dlr_bounce_sell.yaml"]
+      VRT:
+        cooldown_minutes: 30
+        strategies: ["vrt_dip_buy.yaml", "vrt_ma_buy.yaml", "vrt_bounce_sell.yaml"]
+
+  # TFSA 风控引擎配置
+  # Paper 测试时 fail_closed=false，实盘部署前设为 true
+  risk_engine:
+    enabled: true
+    fail_closed: false       # true: 风控不可用时拒绝交易（实盘必须 true）
+    approval_required: false  # false: 信号直接提交 IBKR，无需手动审批
+    position_limit_pct: 20.0
+    max_trades_per_year: 80
+    forbid_short_sell: true
+    forbid_day_trading: true

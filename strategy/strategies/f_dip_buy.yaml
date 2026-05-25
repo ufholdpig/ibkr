@@ -1,0 +1,55 @@
+# F 回调买入策略 (Ford Dip Buy)
+# 当 F 出现超卖或短期急跌时，买入 20 股摊薄成本
+# 长期高抛低吸，不断降低持仓成本
+
+strategy_id: "F_DIP_BUY_001"
+name: "F回调买入"
+description: "F超卖或急跌时买入20股，摊薄持仓成本"
+enabled: true
+priority: 10
+# --- v2 字段 ---
+weight: 1.0          # 策略权重(0-2)，影响冲突解决
+state: ACTIVE         # 生命周期状态
+type: dip_buy
+optimization:
+  enabled: false      # 是否允许学习引擎自动调参
+regime_weights:
+  BULL: 1.0
+  BEAR: 1.0
+  SIDEWAYS: 1.0
+
+signal_factors: ["market_data"]
+
+conditions:
+  operator: OR
+  rules:
+    - type: rsi
+      operator: "<"
+      threshold: 50
+    - type: change_pct
+      period: 5
+      operator: "<"
+      threshold: -2.0
+    - operator: AND
+      rules:
+        - type: price_vs_ma
+          period: 20
+          operator: "<"
+        - type: random
+          threshold: 0.4
+
+action:
+  type: "LIMIT_BUY"
+  quantity: 20
+  ticker: "F"
+  price_offset: -0.02
+  tif: "DAY"
+
+metadata:
+  author: "Hermes Agent"
+  created_at: "2026-05-07"
+  version: "1.0.0"
+  tags:
+    - "ford"
+    - "swing-trade"
+    - "cost-averaging"

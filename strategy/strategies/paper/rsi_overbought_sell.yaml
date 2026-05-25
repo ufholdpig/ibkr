@@ -1,0 +1,26 @@
+# RSI超买卖出策略 (RSI Overbought Sell)
+# 当持仓标的 RSI > 70 时卖出，锁定利润
+# 仅用于模拟账户测试
+
+strategy_id: "PAPER_RSI_OVERBOUGHT_SELL"
+name: "RSI超卖卖出"
+description: "RSI超过70时卖出持仓标的，锁定利润(仅模拟账户)"
+enabled: false
+priority: 10
+paper_only: true
+
+signal_factors: ["market_data"]
+
+conditions:
+  operator: AND
+  rules:
+    - type: rsi
+      operator: ">"
+      threshold: 70
+    - type: random
+      threshold: 0.5
+
+action:
+  type: "MARKET_SELL"
+  quantity: 3
+  tif: "DAY"

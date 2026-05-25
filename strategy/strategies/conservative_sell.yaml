@@ -1,0 +1,47 @@
+# 保守卖出策略模版 (Conservative Sell Strategy Template)
+# 当条件满足时，以市价的 (1 + offset) 价格卖出持仓股票
+# 用于测试订单排队场景：限价单略高于市价，可能处于 Submitted 状态
+
+strategy_id: "CONSERVATIVE_SELL_TEMPLATE"
+name: "保守卖出策略"
+description: "以市价略高的价格卖出，测试订单排队等待场景"
+enabled: false
+priority: 50
+# --- v2 字段 ---
+weight: 1.0          # 策略权重(0-2)，影响冲突解决
+state: ACTIVE         # 生命周期状态
+type: template
+optimization:
+  enabled: false      # 是否允许学习引擎自动调参
+regime_weights:
+  BULL: 1.0
+  BEAR: 1.0
+  SIDEWAYS: 1.0
+
+signal_factors: ["market_data"]
+
+# 触发条件：市价 < 成本 * threshold (几乎总是成立)
+conditions:
+  - type: "price_vs_cost"
+    operator: "<"
+    threshold_ratio: 2.0
+
+# 执行动作：限价单卖出，价格 = 市价 * (1 + price_offset)
+# 注意：price_offset 为正值表示高于市价（排队卖出）
+action:
+  type: "MARKET_SELL"
+  quantity: 1
+  tif: "DAY"
+  
+  risk:
+    max_position_percent: 1.0
+    max_order_value: 100.0
+
+# 元数据
+metadata:
+  author: "Hermes Agent"
+  created_at: "2026-04-22"
+  version: "2.0.0"
+  strategy_type: "template"
+  test_purpose: "测试订单提交并处于 Submitted 状态的场景"
+  note: "此策略为通用模版，不绑定特定股票，在生成计划时动态实例化"

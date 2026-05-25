@@ -1,0 +1,43 @@
+strategy_id: "DLR_MA_BUY_001"
+name: "DLR均线买入"
+description: "DLR弱势回调或跌破均线时买入10股，补充库存"
+enabled: true
+priority: 9
+weight: 1.0
+state: ACTIVE
+type: ma_buy
+optimization:
+  enabled: false
+regime_weights:
+  BULL: 1.0
+  BEAR: 1.0
+  SIDEWAYS: 1.0
+signal_factors: ["market_data"]
+conditions:
+  operator: OR
+  rules:
+    - type: rsi
+      operator: "<"
+      threshold: 50
+    - type: change_pct
+      period: 5
+      operator: "<"
+      threshold: -2.0
+    - operator: AND
+      rules:
+        - type: price_vs_ma
+          period: 20
+          operator: "<"
+        - type: random
+          threshold: 0.35
+action:
+  type: "LIMIT_BUY"
+  quantity: 10
+  ticker: "DLR"
+  price_offset: -0.01
+  tif: "DAY"
+metadata:
+  author: "Hermes Agent"
+  created_at: "2026-05-18"
+  version: "1.0.0"
+  tags: ["dlr", "data-center-reit", "ma-reversion"]

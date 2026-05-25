@@ -1,0 +1,42 @@
+strategy_id: "VST_BOUNCE_SELL_001"
+name: "VST反弹卖出"
+description: "VST明显超买或大幅急涨时卖出10股，锁定利润"
+enabled: true
+priority: 15
+weight: 1.0
+state: ACTIVE
+type: bounce_sell
+optimization:
+  enabled: false
+regime_weights:
+  BULL: 1.0
+  BEAR: 1.0
+  SIDEWAYS: 1.0
+signal_factors: ["market_data"]
+conditions:
+  operator: OR
+  rules:
+    - type: rsi
+      operator: ">"
+      threshold: 78
+    - type: change_pct
+      period: 5
+      operator: ">"
+      threshold: 8.0
+    - operator: AND
+      rules:
+        - type: price_vs_ma
+          period: 50
+          operator: ">"
+        - type: random
+          threshold: 0.15
+action:
+  type: "MARKET_SELL"
+  quantity: 10
+  ticker: "VST"
+  tif: "DAY"
+metadata:
+  author: "Hermes Agent"
+  created_at: "2026-05-18"
+  version: "1.0.0"
+  tags: ["vst", "ai-energy", "profit-taking"]

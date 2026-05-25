@@ -1,0 +1,28 @@
+# 短期回调买入策略 (Dip Buy)
+# 当持仓标的 5日跌幅 > 3% 时买入摊薄成本
+# 仅用于模拟账户测试
+
+strategy_id: "PAPER_DIP_BUY"
+name: "短期回调买入"
+description: "5日跌幅超过3%时买入持仓标的摊薄成本(仅模拟账户)"
+enabled: false
+priority: 10
+paper_only: true
+
+signal_factors: ["market_data"]
+
+conditions:
+  operator: AND
+  rules:
+    - type: change_pct
+      period: 5
+      operator: "<"
+      threshold: -3.0
+    - type: random
+      threshold: 0.5
+
+action:
+  type: "LIMIT_BUY"
+  quantity: 10
+  price_offset: -0.02
+  tif: "DAY"

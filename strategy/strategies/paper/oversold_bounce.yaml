@@ -1,0 +1,34 @@
+# 超卖反弹策略 (Oversold Bounce)
+# 当持仓标的出现超卖信号时买入摊薄成本
+# 仅用于模拟账户测试，展示 Phase 2 条件树 + Phase 3 技术指标联动
+
+strategy_id: "PAPER_OVERSOLD_BOUNCE"
+name: "超卖反弹买入"
+description: "RSI超卖或短期急跌时买入持仓标的(仅模拟账户)"
+enabled: false
+priority: 10
+paper_only: true
+
+signal_factors: ["market_data"]
+
+conditions:
+  operator: OR
+  rules:
+    - type: rsi
+      operator: "<"
+      threshold: 30
+    - operator: AND
+      rules:
+        - type: change_pct
+          period: 5
+          operator: "<"
+          threshold: -5.0
+        - type: price_vs_ma
+          period: 20
+          operator: "<"
+
+action:
+  type: "LIMIT_BUY"
+  quantity: 5
+  price_offset: -0.02
+  tif: "DAY"

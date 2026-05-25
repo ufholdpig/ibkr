@@ -1,0 +1,30 @@
+# IBKR 策略学习系统 — 自适应进化配置
+# Phase 3 D35: Feature Flag
+# 
+# enabled: false 表示学习引擎关闭，所有策略保持当前配置不自动变更。
+# 设为 true 后，StrategyLearner 将定期分析绩效并提交审批。
+
+learning:
+  enabled: false            # 学习引擎总开关
+  min_sample_trades: 5      # 最小样本门槛
+  analysis_interval_hours: 24  # 两次分析的最小间隔
+  cross_strategy_learning: false
+  strategy_type_map:
+    dip_buy: ""
+    ma_buy: ""
+    bounce_sell: ""
+    conservative_sell: ""
+    conservative_buy: ""
+    value_buy: ""
+    stop_loss: ""
+    force_sell: ""
+    force_buy: ""
+    oversold_bounce: ""
+    test_buy: ""
+    test_sell: ""
+    aggressive_buy: ""
+
+shadow_trading:
+  enabled: false            # 反事实分析开关，Phase 3启用
+  track_days: 30            # 虚拟交易追踪天数
+  include_in_report: true   # 月度报告是否包含风控成本分析

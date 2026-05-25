@@ -1,0 +1,20 @@
+# Paper Trading 激进买入策略
+# 仅用于模拟账户，无视风险，大量买入
+
+strategy_id: "PAPER_AGGRESSIVE_BUY"
+name: "激进买入"
+description: "激进买入策略，仅用于模拟账户测试"
+enabled: false
+priority: 10
+paper_only: true
+
+signal_factors: []
+
+conditions:
+  - type: "balance_check"
+    min_balance: 100000  # 至少10万现金
+
+action:
+  type: "MARKET_BUY"
+  quantity: 100  # 大量买入（受风控 max_order_value_pct 限制）
+  ticker: "AAPL"   # 固定买入 AAPL 测试
