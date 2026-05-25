@@ -43,6 +43,13 @@ def convert_signal_to_dict(signal) -> Dict[str, Any]:
         "priority": getattr(signal, "priority", 0),
         "signal_price": getattr(signal, "signal_price", 0.0),
         "market_regime": getattr(signal, "market_regime", ""),
+        # v3 风控/执行字段
+        "entry_delay_days": getattr(signal, "entry_delay_days", 0),
+        "stop_loss_type": getattr(signal, "stop_loss_type", ""),
+        "stop_loss_pct": getattr(signal, "stop_loss_pct", 0.0),
+        "take_profit_pct": getattr(signal, "take_profit_pct", 0.0),
+        "trailing_stop_pct": getattr(signal, "trailing_stop_pct", 0.0),
+        "oco_group_id": getattr(signal, "oco_group_id", ""),
         "processed": False,
         "timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
     }

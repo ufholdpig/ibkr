@@ -1,11 +1,13 @@
 """
-Watch 守护进程 — Phase 7b 多标的 + TFSA 风控版本
+Watch 守护进程 — 多标的策略监控 + TFSA 风控
 
-由 intra-day/post-market 模块通过 SIGUSR1/SIGUSR2 控制状态切换，
-自身不做时间/假期判断（启动时仅做一次兜底检查）。
-
-多标的支持：从 config 读取 symbol 列表，主循环轮询。
-TFSA 风控：提交订单前调用 RiskEngine 前置检查。
+功能：
+- 从 WatchConfig.templates 推导标的列表，主循环轮询 StrategyFactory.analyze()
+- 交易时段自动 ACTIVE/SLEEP 切换（9:30~16:00 ET），支持 SIGUSR1/SIGUSR2 手动控制
+- 信号冷却（per-symbol，实盘倍率放大）
+- PendingSignalStore 延迟信号：entry_delay_days > 0 时存入，到期自动执行
+- TFSA 风控：提交订单前调用 RiskEngine 前置检查
+- MarketRegimeDetector：regime_weights 按市场状态加权信号优先级
 """
 
 import json
@@ -137,7 +139,16 @@ class WatchDaemon:
         self._connect_ibkr_client()
 
         config = load_config()
+
+        try:
+            from src.core.regime import MarketRegimeDetector
+            regime_detector = MarketRegimeDetector()
+        except Exception as e:
+            self.logger.warning("RegimeDetector 初始化失败，降级为无加权模式: %s", e)
+            regime_detector = None
+
         self.factory = StrategyFactory(
+            regime_detector=regime_detector,
             client=self._ibkr_client,
             market_data_source=config.market_data_source,
             template_dir=config.watch.template_dir,

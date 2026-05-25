@@ -258,18 +258,15 @@ class MarketDataProvider:
         if ma_50 is not None and ma_200 is not None and closes[-1] != 0:
             ma_spread_ratio = (ma_50 - ma_200) / closes[-1]
 
-        # Consolidation detection (need rolling MA50 for last N bars)
+        # Consolidation detection (rolling MA50 for last 60 bars)
         consolidation_info = {"is_consolidating": None, "consolidation_days": None, "breakout_detected": None}
         if len(closes) >= 50:
             ma_50_series = []
-            for i in range(min(60, len(closes) - 49)):
-                end = len(closes) - 59 + 49 + i if len(closes) >= 110 else 50 + i
-                end = min(end, len(closes))
-                start = end - 50
-                if start >= 0:
-                    ma_50_series.append(sum(closes[start:end]) / 50)
-            if ma_50_series:
-                consolidation_info = self.compute_consolidation(closes, ma_50_series)
+            for i in range(50, len(closes)):
+                ma_50_series.append(sum(closes[i - 50:i]) / 50)
+            # Keep only the last 60 values (aligned with closes[-len(ma_50_series):])
+            ma_50_series = ma_50_series[-60:]
+            consolidation_info = self.compute_consolidation(closes, ma_50_series)
 
         # Volume ratio
         volume_ratio = None

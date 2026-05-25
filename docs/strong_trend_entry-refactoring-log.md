@@ -21,6 +21,8 @@
 | Phase 3 | OCO 订单 | `orders.py` (place_bracket_order) | ✅ 完成 |
 | Phase 3 | 延迟执行 | `pending_signals.py` | ✅ 完成 |
 | Phase 4 | 配置结构重构 | per-symbol → per-template，删除 strategies 概念 | ✅ 完成 |
+| Phase 5 | 后续工作实施 | PendingSignalStore 集成 + fib_time pullback + ma_slope_turn | ✅ 完成 |
+| Phase 6 | Code Review 修复 | v3 序列化 + regime_detector + consolidation 重写 | ✅ 完成 |
 
 ---
 
@@ -426,13 +428,114 @@ class StrategyFactory:
 
 ---
 
-## 九、后续工作
+## 九、Phase 5: 后续工作实施 — 延迟信号 + 条件增强
+
+> 实施日期：2026-05-25
+> Commit: `2b3e6a5`
+
+### 9.1 Watch Daemon 集成 PendingSignalStore
+
+**变更文件**：`src/trading/watch_daemon.py`
+
+在 daemon 主循环中新增三阶段处理：
+
+```
+Phase 1: 检查到期延迟信号 → get_ready_signals() → 立即执行
+Phase 2: 生成新信号 → factory.analyze()
+Phase 3: 分流 → entry_delay_days > 0 存入 pending store / 否则立即提交
+```
+
+同时新增定期清理逻辑（每 100 轮心跳清理 7 天前的过期记录）。
+
+### 9.2 斐波那契条件优化
+
+**变更文件**：
+- `src/core/conditions/fib_time.py` — 新增 `mode` 参数
+- `src/core/market_data.py` — 新增 `days_from_high` 计算
+- `src/core/strategy.py` — MarketData 新增 `days_from_high` 字段，ConditionNode 新增 `mode` 字段
+
+**两种模式**：
+- `mode: "consolidation"`（默认）— 横盘天数匹配斐波那契
+- `mode: "pullback"` — 从 60 日内最高点算起的回调天数匹配斐波那契
+
+**YAML 用法**：
+```yaml
+- type: fib_time
+  mode: "pullback"    # 新增模式
+  threshold: 2        # 容差天数
+```
+
+### 9.3 MA200 走平转上检测
+
+**变更文件**：
+- `src/core/conditions/ma_slope_turn.py` — 新增求值器
+- `src/core/market_data.py` — 新增 `ma_200_slope_prev` 计算（前移 5 根窗口）
+- `src/core/strategy.py` — MarketData 新增 `ma_200_slope_prev`，ConditionNode 新增 `flat_threshold`
+- `strategy/templates/trend_entry_strict.yaml` — 条件3 从 `sma_slope` 改为 `ma_slope_turn`
+
+**检测逻辑**：
+```
+触发条件: current_slope > flat_threshold AND prev_slope <= flat_threshold
+```
+即 MA200 斜率从"走平或向下"（≤1°）转变为"向上"（>1°），表示长期趋势拐头。
+
+**YAML 用法**：
+```yaml
+- type: ma_slope_turn
+  period: 200
+  flat_threshold: 1.0   # 低于此角度视为"走平"
+```
+
+---
+
+## 十、Phase 6: Code Review 修复
+
+> 实施日期：2026-05-25
+> 来源：`docs/code-review-2026-05-25.md` 中 3.1, 3.2, 3.5, 3.6 及琐碎修复
+
+### 10.1 修复 v3 字段序列化丢失 (原 3.1)
+
+**问题**：`convert_signal_to_dict()` 只序列化了 v1/v2 字段，`stop_loss_type`, `stop_loss_pct`, `take_profit_pct`, `trailing_stop_pct`, `oco_group_id`, `entry_delay_days` 全部丢失。
+
+**原因**：Phase 3 添加了 TradingSignal v3 字段，但 `convert_signal_to_dict()` 未同步更新。导致 YAML 中配置的止损止盈参数无法传递到执行层。
+
+**修复**：在 dict 中补充全部 6 个 v3 字段。
+
+### 10.2 修复 `_create_signal` 缺失字段 (原 3.2)
+
+**问题**：`YAMLTemplateStrategy._create_signal()` 从 risk_config 读取了 4 个字段，但遗漏了 `entry_delay_days` 和 `oco_group_id`。
+
+**原因**：这两个字段不在 `risk` 段内，而是在 `action` 级别或顶层，读取路径不同。
+
+**修复**：从 action config 中读取 `entry_delay_days`，`oco_group_id` 自动生成（基于 strategy_id + symbol + 时间戳哈希）。
+
+### 10.3 修复 regime_detector 未传入 (原 3.5)
+
+**问题**：构造 StrategyFactory 时 `regime_detector=None`，导致 `regime_weights`（BULL: 1.5, BEAR: 0.0, SIDEWAYS: 0.5）永远不被应用。
+
+**原因**：`RegimeDetector` 依赖历史数据判断市场状态，在 daemon 初始化时未实例化。
+
+**修复**：在 daemon 中延迟创建 `RegimeDetector` 并传入 factory。若 detector 不可用则降级为默认权重 1.0（等同于不加权）。
+
+### 10.4 重写 consolidation MA50 序列计算 (原 3.6)
+
+**问题**：原代码 `len(closes) - 59 + 49 + i` 的索引计算等价于 `len(closes) - 10 + i`，但逻辑不直观，在 110 附近有分支拼接风险。
+
+**修复**：改为简洁的滑动窗口循环，逻辑一目了然。
+
+### 10.5 琐碎修复
+
+- `watch_daemon.py` 文件头 docstring：更新为当前行为描述（原描述"自身不做时间判断"与实际 `_is_trading_now()` 不符）
+- `strategy.py` StrategyFactory：yfinance 回退 info log 已在 commit `884199c` 中修复，无需再改
+
+---
+
+## 十一、后续工作
 
 | 项目 | 优先级 | 说明 |
 |------|--------|------|
-| Watch Daemon 集成 | P0 | daemon 循环中调用 `PendingSignalStore` 处理延迟信号 |
 | 回测验证 | P0 | 用 BacktestEngine 对 trend_entry 参数做网格搜索 |
+| OCO 实盘接入 execute() | P1 | 当 signal 携带 stop_loss/take_profit 时调用 place_bracket_order |
 | OCO 实盘测试 | P1 | 在 Paper 环境验证 bracket order 的部分成交行为 |
-| 斐波那契条件优化 | P2 | 当前只检查横盘天数，未来可扩展为"从高点回调天数" |
-| 条件3 (MA200 走平转上) | P2 | 需独立于 sma_slope，增加"方向变化"检测逻辑 |
+| retrace_breakout 增强 | P2 | 真正的趋势线计算（连接两个回撤低点的斜线） |
 | 指数期货支持 | P2 | 新资产类别，Contract 定义需扩展 FUT 类型 |

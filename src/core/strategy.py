@@ -630,6 +630,16 @@ class YAMLTemplateStrategy:
         take_profit_pct = risk.get("take_profit_pct", 0.0)
         trailing_stop_pct = risk.get("trailing_stop_pct", 0.0)
 
+        # entry_delay_days lives at action level, not in risk
+        entry_delay_days = int(self.action_config.get("entry_delay_days", 0))
+
+        # Auto-generate OCO group ID when bracket params are present
+        oco_group_id = ""
+        if stop_loss_pct > 0 or take_profit_pct > 0:
+            import hashlib
+            raw = f"{self.strategy_id}_{symbol}_{datetime.now().strftime('%Y%m%d')}"
+            oco_group_id = hashlib.md5(raw.encode()).hexdigest()[:8]
+
         return TradingSignal(
             strategy_name=self.name,
             symbol=symbol,
@@ -641,4 +651,6 @@ class YAMLTemplateStrategy:
             stop_loss_pct=stop_loss_pct,
             take_profit_pct=take_profit_pct,
             trailing_stop_pct=trailing_stop_pct,
+            entry_delay_days=entry_delay_days,
+            oco_group_id=oco_group_id,
         )
