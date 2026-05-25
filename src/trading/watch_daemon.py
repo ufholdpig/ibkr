@@ -129,8 +129,19 @@ class WatchDaemon:
         self._ibkr_client = None
         self._connect_ibkr_client()
 
-        self.factory = StrategyFactory(client=self._ibkr_client, market_data_source=load_config().market_data_source)
-        self.logger.info("策略引擎已就绪（%d 个模板）", len(self.factory.yaml_strategies))
+        config = load_config()
+        watch_symbols_dict = {
+            sym: {"templates": sc.templates, "strategies": sc.strategies}
+            for sym, sc in config.watch.symbols.items()
+        }
+        self.factory = StrategyFactory(
+            config_dir=config.watch.strategy_dir,
+            client=self._ibkr_client,
+            market_data_source=config.market_data_source,
+            template_dir=config.watch.template_dir,
+            watch_symbols=watch_symbols_dict,
+        )
+        self.logger.info("策略引擎已就绪（%d 个策略实例）", len(self.factory.yaml_strategies))
 
     def _connect_ibkr_client(self):
         """连接 IBKR 数据客户端 — 供 StrategyFactory 使用"""

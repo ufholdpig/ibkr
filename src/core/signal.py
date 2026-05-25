@@ -115,8 +115,18 @@ class SignalGenerator:
             # 获取账户信息（用于 is_paper 判断）
             account_info = client.get_account_info(timeout=30)
 
-            # 加载策略工厂（传入 client 和 market_data_source，工厂自动加载全部模板并按 signal_factors 获取数据）
-            factory = StrategyFactory(client=client, market_data_source=config.market_data_source)
+            # 加载策略工厂（支持模版+策略双路径加载）
+            watch_symbols_dict = {
+                sym: {"templates": sc.templates, "strategies": sc.strategies}
+                for sym, sc in config.watch.symbols.items()
+            }
+            factory = StrategyFactory(
+                config_dir=config.watch.strategy_dir,
+                client=client,
+                market_data_source=config.market_data_source,
+                template_dir=config.watch.template_dir,
+                watch_symbols=watch_symbols_dict,
+            )
 
             # 过滤策略（如果指定了具体策略名）
             if strategy_name and strategy_name != "all":

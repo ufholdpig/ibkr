@@ -1,0 +1,64 @@
+strategy_id: "TREND_ENTRY_STRICT_{symbol}"
+name: "{symbol} 趋势入场(严格)"
+description: "{symbol} 12条条件全部满足的严格趋势跟踪入场，信号稀少但高胜率"
+enabled: true
+priority: 25
+weight: 1.5
+state: ACTIVE
+type: trend_entry_strict
+regime_weights:
+  BULL: 1.5
+  BEAR: 0.0
+  SIDEWAYS: 0.3
+signal_factors: ["market_data"]
+conditions:
+  operator: AND
+  rules:
+    # 条件1: 多头排列 Price > MA50 > MA200
+    - type: ma_stack
+      operator: ">"
+    # 条件2: MA50 斜率向上 5°~45°（建议25°）
+    - type: sma_slope
+      period: 50
+      threshold: 5
+      multiplier: 45
+      operator: ">"
+    # 条件3: MA200 由走平转上（>5°）
+    - type: sma_slope
+      period: 200
+      threshold: 5
+      multiplier: 90
+      operator: ">"
+    # 条件4: MA50/MA200 间距紧凑（< 5%）
+    - type: ma_spread
+      operator: "<"
+      threshold: 0.05
+    # 条件5/6: 横盘突破 或 回撤突破
+    - operator: OR
+      rules:
+        # 条件5: 横盘突破 + 条件7: 斐波那契时间确认
+        - operator: AND
+          rules:
+            - type: consolidation_breakout
+            - type: fib_time
+              threshold: 2
+        # 条件6: 回撤至MA50后反弹突破
+        - type: retrace_breakout
+    # 条件8: 突破量 > 均量 1.3 倍
+    - type: volume_spike
+      multiplier: 1.3
+    # 条件9: RSI > 45
+    - type: rsi
+      operator: ">"
+      threshold: 45
+action:
+  type: "LIMIT_BUY"
+  quantity: 10
+  ticker: "{symbol}"
+  price_offset: -0.003
+  tif: "DAY"
+  risk:
+    stop_loss_type: "ma50_minus_pct"
+    stop_loss_pct: 0.03
+    take_profit_pct: 0.20
+    trailing_stop_pct: 0.07

@@ -1,0 +1,52 @@
+strategy_id: "TREND_ENTRY_{symbol}"
+name: "{symbol} 趋势入场"
+description: "{symbol} 多头排列+横盘突破/回撤突破入场，趋势跟踪策略"
+enabled: true
+priority: 20
+weight: 1.2
+state: ACTIVE
+type: trend_entry
+regime_weights:
+  BULL: 1.5
+  BEAR: 0.0
+  SIDEWAYS: 0.5
+signal_factors: ["market_data"]
+conditions:
+  operator: AND
+  rules:
+    # Condition 1: Bullish MA alignment (Price > MA50 > MA200)
+    - type: ma_stack
+      operator: ">"
+    # Condition 2: MA50 slope upward (5-45 degrees)
+    - type: sma_slope
+      period: 50
+      threshold: 5
+      multiplier: 45
+      operator: ">"
+    # Condition 4: MA50/MA200 spread within tight range
+    - type: ma_spread
+      operator: "<"
+      threshold: 0.05
+    # Condition 8: Volume confirmation (>1.3x average)
+    - type: volume_spike
+      multiplier: 1.3
+    # Condition 9: RSI > 45 (not oversold)
+    - type: rsi
+      operator: ">"
+      threshold: 45
+    # Condition 5 OR 6: Consolidation breakout or retrace breakout
+    - operator: OR
+      rules:
+        - type: consolidation_breakout
+        - type: retrace_breakout
+action:
+  type: "LIMIT_BUY"
+  quantity: 10
+  ticker: "{symbol}"
+  price_offset: -0.003
+  tif: "DAY"
+  risk:
+    stop_loss_type: "ma50_minus_pct"
+    stop_loss_pct: 0.03
+    take_profit_pct: 0.20
+    trailing_stop_pct: 0.07

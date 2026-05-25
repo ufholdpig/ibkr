@@ -1,13 +1,11 @@
-strategy_id: "CEG_MA_BUY_001"
-name: "CEG均线买入"
-description: "CEG弱势回调或跌破均线时买入5股，补充库存"
+strategy_id: "MA_BUY_{symbol}"
+name: "{symbol} 均线买入"
+description: "{symbol} 弱势回调或跌破均线时买入，等待入场时机"
 enabled: true
 priority: 9
 weight: 1.0
 state: ACTIVE
 type: ma_buy
-optimization:
-  enabled: false
 regime_weights:
   BULL: 1.0
   BEAR: 1.0
@@ -18,26 +16,23 @@ conditions:
   rules:
     - type: rsi
       operator: "<"
-      threshold: 50
+      threshold: 45
     - type: change_pct
       period: 5
       operator: "<"
-      threshold: -2.0
+      threshold: -2.5
     - operator: AND
       rules:
         - type: price_vs_ma
           period: 20
           operator: "<"
-        - type: random
-          threshold: 0.35
+        - type: change_pct
+          period: 1
+          operator: "<"
+          threshold: -1.0
 action:
   type: "LIMIT_BUY"
   quantity: 5
-  ticker: "CEG"
-  price_offset: -0.01
+  ticker: "{symbol}"
+  price_offset: -0.005
   tif: "DAY"
-metadata:
-  author: "Hermes Agent"
-  created_at: "2026-05-18"
-  version: "1.0.0"
-  tags: ["ceg", "nuclear-energy", "ma-reversion"]

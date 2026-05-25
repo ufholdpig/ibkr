@@ -38,10 +38,11 @@ ibkr:
       post_market: "reports/paper/post_market"
 
   # Watch 守护进程配置
-  # symbols: 每只股票独立指定策略文件和冷却时间
+  # symbols: 每只股票独立指定模版和策略文件
   watch:
     poll_interval: 5
     indicator_refresh_minutes: 30
+    template_dir: "strategy/templates"
     strategy_dir: "strategy/strategies"
     # 实盘冷却倍率: Paper 冷却 x 此值 = 实盘冷却 (4x = 15min→60min, 30min→120min)
     # Paper 保持高频方便测试, 实盘大幅降低信号频率避免信号文件噪声
@@ -49,34 +50,42 @@ ibkr:
     symbols:
       F:
         cooldown_minutes: 15
-        strategies: ["f_dip_buy.yaml", "f_ma_buy.yaml", "f_bounce_sell.yaml"]
+        templates: ["dip_buy", "ma_buy", "bounce_sell"]
+        strategies: []
       AAPL:
         cooldown_minutes: 15
-        strategies: ["aapl_dip_buy.yaml", "aapl_ma_buy.yaml", "aapl_bounce_sell.yaml"]
+        templates: ["dip_buy", "ma_buy", "bounce_sell"]
+        strategies: []
 
       # AI储能 - 优先推荐（52周低点附近 + Forward PE低 + 目标空间大）
       VST:
         cooldown_minutes: 20
-        strategies: ["vst_dip_buy.yaml", "vst_ma_buy.yaml", "vst_bounce_sell.yaml"]
+        templates: ["trend_entry", "dip_buy", "bounce_sell"]
+        strategies: []
       CEG:
         cooldown_minutes: 20
-        strategies: ["ceg_dip_buy.yaml", "ceg_ma_buy.yaml", "ceg_bounce_sell.yaml"]
+        templates: ["trend_entry", "dip_buy", "bounce_sell"]
+        strategies: []
 
       # AI算力 - 等待回调建仓
       NVDA:
         cooldown_minutes: 30
-        strategies: ["nvda_dip_buy.yaml", "nvda_ma_buy.yaml", "nvda_bounce_sell.yaml"]
+        templates: ["trend_entry", "dip_buy", "ma_buy", "bounce_sell"]
+        strategies: []
       AVGO:
         cooldown_minutes: 30
-        strategies: ["avgo_dip_buy.yaml", "avgo_ma_buy.yaml", "avgo_bounce_sell.yaml"]
+        templates: ["trend_entry", "dip_buy", "ma_buy", "bounce_sell"]
+        strategies: []
 
       # AI基础设施 - 防御性持仓
       DLR:
         cooldown_minutes: 20
-        strategies: ["dlr_dip_buy.yaml", "dlr_ma_buy.yaml", "dlr_bounce_sell.yaml"]
+        templates: ["dip_buy", "ma_buy", "bounce_sell"]
+        strategies: []
       VRT:
         cooldown_minutes: 30
-        strategies: ["vrt_dip_buy.yaml", "vrt_ma_buy.yaml", "vrt_bounce_sell.yaml"]
+        templates: ["trend_entry", "dip_buy", "ma_buy", "bounce_sell"]
+        strategies: []
 
   # TFSA 风控引擎配置
   # Paper 测试时 fail_closed=false，实盘部署前设为 true

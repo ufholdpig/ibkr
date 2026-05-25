@@ -2,9 +2,10 @@
 市场数据提供者 — 统一数据源接口（IBKR / yfinance），计算技术指标
 
 Phase 3: 数据计算层
-目标: 填充 MarketData 所有技术指标字段 (rsi_14, ma_20, ma_50, volume_avg_20d, change_*_pct)
+目标: 填充 MarketData 所有技术指标字段 (rsi_14, ma_20, ma_50, ma_200, slopes, consolidation, etc.)
 """
 
+import math
 from typing import List, Dict, Optional
 
 from src.core.client import IBKRClient
@@ -157,7 +158,75 @@ class MarketDataProvider:
             return None
         return sum(values[-period:]) / period
 
-    def compute_indicators(self, bars: List[Bar]) -> Dict[str, Optional[float]]:
+    def compute_sma_slope(self, closes: List[float], period: int, lookback: int = 10) -> Optional[float]:
+        """Compute SMA slope as angle in degrees using linear regression over lookback bars.
+
+        Returns angle in degrees where positive = upward slope.
+        Uses normalized slope (relative to price level) to make angles comparable across stocks.
+        """
+        if len(closes) < period + lookback:
+            return None
+
+        sma_values = []
+        for i in range(lookback):
+            end_idx = len(closes) - lookback + i + 1
+            sma_values.append(sum(closes[end_idx - period:end_idx]) / period)
+
+        n = len(sma_values)
+        x_mean = (n - 1) / 2.0
+        y_mean = sum(sma_values) / n
+
+        numerator = sum((i - x_mean) * (sma_values[i] - y_mean) for i in range(n))
+        denominator = sum((i - x_mean) ** 2 for i in range(n))
+
+        if denominator == 0:
+            return 0.0
+
+        slope = numerator / denominator
+        price_level = sma_values[-1] if sma_values[-1] != 0 else 1.0
+        normalized_slope = slope / price_level * period
+        angle = math.atan(normalized_slope) * 180.0 / math.pi
+        return angle
+
+    def compute_consolidation(self, closes: List[float], ma_50_values: List[float],
+                              threshold_pct: float = 3.0) -> Dict[str, Optional]:
+        """Detect consolidation: price staying within +/-threshold_pct of MA50.
+
+        Returns dict with is_consolidating, consolidation_days, breakout_detected.
+        """
+        if not ma_50_values or len(closes) < 2:
+            return {"is_consolidating": None, "consolidation_days": None, "breakout_detected": None}
+
+        days_in_range = 0
+        consolidation_high = float('-inf')
+
+        for i in range(len(ma_50_values) - 1, -1, -1):
+            close_idx = len(closes) - len(ma_50_values) + i
+            if close_idx < 0:
+                break
+            price = closes[close_idx]
+            ma = ma_50_values[i]
+            if ma == 0:
+                break
+            deviation = abs(price - ma) / ma * 100
+            if deviation <= threshold_pct:
+                days_in_range += 1
+                consolidation_high = max(consolidation_high, price)
+            else:
+                break
+
+        is_consolidating = days_in_range >= 5
+        breakout_detected = False
+        if is_consolidating and consolidation_high > float('-inf'):
+            breakout_detected = closes[-1] > consolidation_high and len(closes) >= 2 and closes[-2] <= consolidation_high
+
+        return {
+            "is_consolidating": is_consolidating,
+            "consolidation_days": days_in_range if is_consolidating else 0,
+            "breakout_detected": breakout_detected,
+        }
+
+    def compute_indicators(self, bars: List[Bar]) -> Dict[str, Optional]:
         closes = [b.close for b in bars]
         volumes = [float(b.volume) for b in bars]
 
@@ -173,34 +242,84 @@ class MarketDataProvider:
         if len(closes) >= 21:
             change_20d = (closes[-1] - closes[-21]) / closes[-21] * 100
 
+        ma_50 = self.compute_sma(closes, 50)
+        ma_200 = self.compute_sma(closes, 200)
+        volume_avg_20d = self.compute_sma(volumes, 20)
+
+        # Trend-following indicators
+        ma_50_slope = self.compute_sma_slope(closes, 50, lookback=10)
+        ma_200_slope = self.compute_sma_slope(closes, 200, lookback=10)
+
+        ma_spread_ratio = None
+        if ma_50 is not None and ma_200 is not None and closes[-1] != 0:
+            ma_spread_ratio = (ma_50 - ma_200) / closes[-1]
+
+        # Consolidation detection (need rolling MA50 for last N bars)
+        consolidation_info = {"is_consolidating": None, "consolidation_days": None, "breakout_detected": None}
+        if len(closes) >= 50:
+            ma_50_series = []
+            for i in range(min(60, len(closes) - 49)):
+                end = len(closes) - 59 + 49 + i if len(closes) >= 110 else 50 + i
+                end = min(end, len(closes))
+                start = end - 50
+                if start >= 0:
+                    ma_50_series.append(sum(closes[start:end]) / 50)
+            if ma_50_series:
+                consolidation_info = self.compute_consolidation(closes, ma_50_series)
+
+        # Volume ratio
+        volume_ratio = None
+        if volume_avg_20d and volume_avg_20d > 0 and volumes:
+            volume_ratio = volumes[-1] / volume_avg_20d
+
+        # Retrace to MA50 detection
+        retrace_to_ma50 = None
+        if ma_50 is not None and closes[-1] != 0:
+            deviation_pct = abs(closes[-1] - ma_50) / closes[-1] * 100
+            retrace_to_ma50 = deviation_pct <= 3.0
+
         return {
             "ma_20": self.compute_sma(closes, 20),
-            "ma_50": self.compute_sma(closes, 50),
+            "ma_50": ma_50,
+            "ma_200": ma_200,
             "rsi_14": self.compute_rsi(closes, 14),
-            "volume_avg_20d": self.compute_sma([float(v) for v in volumes], 20),
+            "volume_avg_20d": volume_avg_20d,
             "change_1d_pct": change_1d,
             "change_5d_pct": change_5d,
             "change_20d_pct": change_20d,
+            "ma_50_slope": ma_50_slope,
+            "ma_200_slope": ma_200_slope,
+            "ma_spread_ratio": ma_spread_ratio,
+            "is_consolidating": consolidation_info["is_consolidating"],
+            "consolidation_days": consolidation_info["consolidation_days"],
+            "breakout_detected": consolidation_info["breakout_detected"],
+            "volume_ratio": volume_ratio,
+            "retrace_to_ma50": retrace_to_ma50,
         }
 
     def enrich(self, market_data_list: List[MarketData]) -> List[MarketData]:
-        """批量补全 MarketData 的技术指标字段"""
+        """批量补全 MarketData 的技术指标字段
+
+        Fetches 220 days of history to support SMA200 + slope lookback calculations.
+        """
         for md in market_data_list:
             try:
-                bars = self.fetch_historical(md.symbol, days=60)
+                bars = self.fetch_historical(md.symbol, days=220)
                 if not bars or len(bars) < 2:
                     logger.warning(f"{md.symbol}: 历史数据不足 ({len(bars)} bars), 跳过指标计算")
                     continue
 
                 indicators = self.compute_indicators(bars)
-                for field, value in indicators.items():
+                for attr, value in indicators.items():
                     if value is not None:
-                        setattr(md, field, value)
+                        setattr(md, attr, value)
 
-                if md.rsi_14 is not None:
+                if md.rsi_14 is not None and md.ma_50 is not None:
+                    slope_str = f", slope50={md.ma_50_slope:.1f}°" if md.ma_50_slope is not None else ""
+                    ma200_str = f", MA200={md.ma_200:.2f}" if md.ma_200 is not None else ""
                     logger.info(
-                        f"{md.symbol}: MA20={md.ma_20:.2f}, MA50={md.ma_50:.2f}, "
-                        f"RSI14={md.rsi_14:.1f}"
+                        f"{md.symbol}: MA50={md.ma_50:.2f}{ma200_str}, "
+                        f"RSI14={md.rsi_14:.1f}{slope_str}"
                     )
                 elif md.ma_20 is not None:
                     logger.info(f"{md.symbol}: MA20={md.ma_20:.2f}")

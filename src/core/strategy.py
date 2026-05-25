@@ -42,8 +42,18 @@ class MarketData:
     # --- 技术指标 ---
     ma_20: Optional[float] = None
     ma_50: Optional[float] = None
+    ma_200: Optional[float] = None
     rsi_14: Optional[float] = None
     volume_avg_20d: Optional[float] = None
+    # --- 趋势跟踪指标 ---
+    ma_50_slope: Optional[float] = None
+    ma_200_slope: Optional[float] = None
+    ma_spread_ratio: Optional[float] = None
+    is_consolidating: Optional[bool] = None
+    consolidation_days: Optional[int] = None
+    volume_ratio: Optional[float] = None
+    breakout_detected: Optional[bool] = None
+    retrace_to_ma50: Optional[bool] = None
     # --- 衍生涨跌幅 ---
     change_1d_pct: Optional[float] = None
     change_5d_pct: Optional[float] = None
@@ -85,6 +95,13 @@ class TradingSignal:
     signal_price: float = 0.0
     weight: float = 1.0
     market_regime: str = ""
+    # --- v3新增字段: 趋势跟踪执行管线 ---
+    entry_delay_days: int = 0
+    stop_loss_type: str = ""
+    stop_loss_pct: float = 0.0
+    take_profit_pct: float = 0.0
+    trailing_stop_pct: float = 0.0
+    oco_group_id: str = ""
 
     def __post_init__(self):
         if self.timestamp is None:
@@ -228,9 +245,77 @@ def _collect_target_symbols(conditions_raw, action_config: dict) -> set:
     return symbols
 
 
+class StrategyTemplateEngine:
+    """Template engine: loads YAML templates and expands {symbol} placeholders.
+
+    Templates live in strategy/templates/ and contain {symbol} placeholders
+    that get replaced with actual symbol names to produce strategy instances.
+    """
+
+    def __init__(self, template_dir: Path = None):
+        if template_dir is None:
+            template_dir = PROJECT_ROOT / "strategy" / "templates"
+        elif isinstance(template_dir, str):
+            template_dir = Path(template_dir)
+        self.template_dir = template_dir
+        self.logger = logging.getLogger("StrategyTemplateEngine")
+        self._cache: Dict[str, dict] = {}
+
+    def _load_template(self, template_name: str) -> Optional[dict]:
+        """Load and cache a raw template YAML."""
+        if template_name in self._cache:
+            return self._cache[template_name]
+
+        filename = f"{template_name}.yaml"
+        filepath = self.template_dir / filename
+        if not filepath.exists():
+            self.logger.error(f"模版文件不存在: {filepath}")
+            return None
+
+        try:
+            with open(filepath, "r") as f:
+                raw = yaml.safe_load(f)
+            if raw:
+                self._cache[template_name] = raw
+            return raw
+        except Exception as e:
+            self.logger.error(f"模版加载失败 {filename}: {e}")
+            return None
+
+    def expand(self, template_name: str, symbol: str) -> Optional[dict]:
+        """Expand a template for a specific symbol by replacing {symbol} placeholders."""
+        raw = self._load_template(template_name)
+        if raw is None:
+            return None
+
+        yaml_str = yaml.dump(raw, default_flow_style=False, allow_unicode=True)
+        expanded_str = yaml_str.replace("{symbol}", symbol)
+        try:
+            return yaml.safe_load(expanded_str)
+        except Exception as e:
+            self.logger.error(f"模版展开失败 {template_name} / {symbol}: {e}")
+            return None
+
+    def expand_all(self, symbol: str, template_names: List[str]) -> List[dict]:
+        """Expand multiple templates for one symbol."""
+        results = []
+        for name in template_names:
+            config = self.expand(name, symbol)
+            if config:
+                results.append(config)
+        return results
+
+
 class StrategyFactory:
-    """策略工厂：动态加载 YAML 策略模板，按模板声明的 signal_factors 自动获取数据"""
-    def __init__(self, config_dir: str = None, regime_detector=None, client=None, market_data_source: str = "auto"):
+    """策略工厂：动态加载 YAML 策略模板，按模板声明的 signal_factors 自动获取数据
+
+    Supports two loading paths:
+    - templates: via StrategyTemplateEngine, expanded per-symbol from config
+    - strategies: direct YAML files from strategy_dir
+    """
+    def __init__(self, config_dir: str = None, regime_detector=None, client=None,
+                 market_data_source: str = "auto", template_dir: str = None,
+                 watch_symbols: Dict = None):
         if config_dir is None:
             config_dir = PROJECT_ROOT / "strategy" / "strategies"
         elif isinstance(config_dir, str):
@@ -241,26 +326,66 @@ class StrategyFactory:
         self.regime_detector = regime_detector
         self.client = client
         self.market_data_source = market_data_source
+        self.watch_symbols = watch_symbols or {}
         self.logger = logging.getLogger("StrategyFactory")
-        self.logger.info("加载全部策略模板...")
+
+        if template_dir is None:
+            self.template_engine = StrategyTemplateEngine()
+        else:
+            self.template_engine = StrategyTemplateEngine(Path(template_dir))
+
+        self.logger.info("加载全部策略...")
         self.load_all()
 
     def load_all(self):
-        """加载 config_dir 下所有策略 YAML 文件（含子目录）"""
+        """Load strategies from both template expansion and direct strategy files.
+
+        1. Expand templates for each symbol in watch_symbols (if templates[] specified)
+        2. Load direct strategy files from strategy_dir (per-symbol strategies[] or all *.yaml)
+        """
+        # Path 1: Template expansion
+        templates_loaded = 0
+        for symbol, sym_config in self.watch_symbols.items():
+            if not isinstance(sym_config, dict):
+                continue
+            template_names = sym_config.get("templates", [])
+            for tmpl_config in self.template_engine.expand_all(symbol, template_names):
+                strategy = YAMLTemplateStrategy(tmpl_config)
+                self.yaml_strategies.append(strategy)
+                templates_loaded += 1
+
+        if templates_loaded > 0:
+            self.logger.info(f"从模版展开 {templates_loaded} 个策略实例")
+
+        # Path 2: Direct strategy files
         if not self.config_dir.exists():
             self.logger.warning(f"策略配置目录不存在：{self.config_dir}")
             return
-        
-        yaml_files = list(self.config_dir.glob("*.yaml"))
-        
-        for subdir in self.config_dir.iterdir():
-            if subdir.is_dir():
-                yaml_files.extend(subdir.glob("*.yaml"))
-        
-        self.logger.info(f"发现 {len(yaml_files)} 个策略配置文件")
-        
-        for yaml_file in yaml_files:
-            self._load_yaml_file(yaml_file)
+
+        # If watch_symbols specifies per-symbol strategies[], load only those
+        specified_files = set()
+        for symbol, sym_config in self.watch_symbols.items():
+            if not isinstance(sym_config, dict):
+                continue
+            for fname in sym_config.get("strategies", []):
+                specified_files.add(fname)
+
+        if specified_files:
+            for fname in specified_files:
+                filepath = self.config_dir / fname
+                if filepath.exists():
+                    self._load_yaml_file(filepath)
+                else:
+                    self.logger.warning(f"指定策略文件不存在: {filepath}")
+        else:
+            # Fallback: load all YAML files in strategy_dir (backward compatible)
+            yaml_files = list(self.config_dir.glob("*.yaml"))
+            for subdir in self.config_dir.iterdir():
+                if subdir.is_dir():
+                    yaml_files.extend(subdir.glob("*.yaml"))
+            self.logger.info(f"发现 {len(yaml_files)} 个策略配置文件")
+            for yaml_file in yaml_files:
+                self._load_yaml_file(yaml_file)
 
     def _load_yaml_file(self, filepath: Path):
         """加载单个 YAML 策略文件"""
@@ -528,11 +653,22 @@ class YAMLTemplateStrategy:
 
         reason = f"{self.name}: 市价 ${market_price:.2f}"
 
+        # Extract risk/execution config from action block
+        risk = self.risk_config
+        stop_loss_type = risk.get("stop_loss_type", "")
+        stop_loss_pct = risk.get("stop_loss_pct", 0.0)
+        take_profit_pct = risk.get("take_profit_pct", 0.0)
+        trailing_stop_pct = risk.get("trailing_stop_pct", 0.0)
+
         return TradingSignal(
             strategy_name=self.name,
             symbol=symbol,
             action=action,
             quantity=quantity,
             target_price=limit_price,
-            reason=reason
+            reason=reason,
+            stop_loss_type=stop_loss_type,
+            stop_loss_pct=stop_loss_pct,
+            take_profit_pct=take_profit_pct,
+            trailing_stop_pct=trailing_stop_pct,
         )

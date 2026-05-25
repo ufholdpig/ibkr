@@ -44,6 +44,7 @@ class ReportConfig:
 @dataclass
 class SymbolWatchConfig:
     """个股 Watch 配置"""
+    templates: list = field(default_factory=list)
     strategies: list = field(default_factory=list)
     cooldown_minutes: int = 15
 
@@ -54,6 +55,7 @@ class WatchConfig:
     symbols: dict = field(default_factory=dict)  # symbol -> SymbolWatchConfig
     poll_interval: int = 5
     indicator_refresh_minutes: int = 30
+    template_dir: str = "strategy/templates"
     strategy_dir: str = "strategy/strategies"
     real_cooldown_multiplier: float = 4.0
 
@@ -145,13 +147,13 @@ class IBKRConfig:
         
         # 加载 watch 守护进程配置
         watch_data = ibkr_data.get("watch", {})
-        symbols_raw = watch_data.get("symbols", {"F": {"strategies": ["f_dip_buy.yaml", "f_bounce_sell.yaml"]}})
-        default_strategies = watch_data.get("strategy_files", ["f_dip_buy.yaml", "f_bounce_sell.yaml"])
+        symbols_raw = watch_data.get("symbols", {})
         if isinstance(symbols_raw, list):
-            symbols_raw = {s.upper(): SymbolWatchConfig(strategies=list(default_strategies)) for s in symbols_raw}
+            symbols_raw = {s.upper(): SymbolWatchConfig(templates=["dip_buy", "bounce_sell"]) for s in symbols_raw}
         elif isinstance(symbols_raw, dict):
             symbols_raw = {
                 sym.upper(): SymbolWatchConfig(
+                    templates=cfg.get("templates", []),
                     strategies=cfg.get("strategies", []),
                     cooldown_minutes=cfg.get("cooldown_minutes", 15),
                 )
@@ -163,6 +165,7 @@ class IBKRConfig:
             symbols=symbols_raw,
             poll_interval=watch_data.get("poll_interval", 5),
             indicator_refresh_minutes=watch_data.get("indicator_refresh_minutes", 30),
+            template_dir=watch_data.get("template_dir", "strategy/templates"),
             strategy_dir=watch_data.get("strategy_dir", "strategy/strategies"),
             real_cooldown_multiplier=watch_data.get("real_cooldown_multiplier", 4.0),
         )

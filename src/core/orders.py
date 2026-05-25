@@ -425,3 +425,160 @@ def cancel_order(client: IBKRClient, order_id: int, timeout: int = 5) -> bool:
 
     logger.info(f"✅ 订单取消请求已发送：ID={order_id}")
     return collector.success or True  # 即使超时也返回 True，因为请求已发送
+
+
+# =====================
+# bracket_orders (OCO)
+# =====================
+def place_bracket_order(
+    client: IBKRClient,
+    contract: Contract,
+    action: str,
+    quantity: float,
+    limit_price: float,
+    stop_loss_price: float,
+    take_profit_price: float = 0.0,
+    tif: str = "GTC",
+    timeout: int = 10,
+) -> dict:
+    """Submit a bracket order (parent + stop loss + optional take profit).
+
+    IBKR bracket orders use parentId to link child orders to the parent.
+    The parent is a LMT BUY, children are STP (stop loss) and LMT SELL (take profit).
+    Children only activate after parent fills.
+
+    Args:
+        client: Connected IBKRClient instance
+        contract: Contract model
+        action: "BUY" or "SELL" (parent direction)
+        quantity: Order quantity
+        limit_price: Parent order limit price
+        stop_loss_price: Stop loss trigger price
+        take_profit_price: Take profit limit price (0 = skip)
+        tif: Time in force for all orders
+        timeout: Callback wait timeout
+
+    Returns:
+        dict with parent_result, stop_loss_id, take_profit_id
+    """
+    api_client = client.get_api_client()
+
+    if not api_client.connected:
+        raise_ibkr_error(NotConnectedError, "未连接到 IB Gateway")
+
+    # Wait for next_order_id
+    if api_client.next_order_id is None:
+        for _ in range(50):
+            time.sleep(0.1)
+            if api_client.next_order_id is not None:
+                break
+        if api_client.next_order_id is None:
+            raise IBKRClientError("IB Gateway 未分配 orderId")
+
+    parent_id = api_client.next_order_id
+    api_client.next_order_id += 1
+    sl_id = api_client.next_order_id
+    api_client.next_order_id += 1
+    tp_id = api_client.next_order_id if take_profit_price > 0 else 0
+    if tp_id:
+        api_client.next_order_id += 1
+
+    reverse_action = "SELL" if action == "BUY" else "BUY"
+
+    # Build IB contract
+    ibapi_contract = IBAPIContract()
+    ibapi_contract.symbol = contract.symbol
+    ibapi_contract.secType = contract.secType
+    ibapi_contract.exchange = contract.exchange
+    ibapi_contract.currency = contract.currency
+    if contract.primaryExchange:
+        ibapi_contract.primaryExchange = contract.primaryExchange
+
+    # Parent order (LMT)
+    parent = IBAPIOrder()
+    parent.orderId = parent_id
+    parent.action = action
+    parent.orderType = "LMT"
+    parent.totalQuantity = quantity
+    parent.lmtPrice = limit_price
+    parent.tif = tif
+    parent.transmit = False  # Hold until children are attached
+    parent.eTradeOnly = False
+    parent.firmQuoteOnly = False
+
+    # Stop loss child (STP)
+    stop_loss = IBAPIOrder()
+    stop_loss.orderId = sl_id
+    stop_loss.action = reverse_action
+    stop_loss.orderType = "STP"
+    stop_loss.totalQuantity = quantity
+    stop_loss.auxPrice = stop_loss_price
+    stop_loss.tif = tif
+    stop_loss.parentId = parent_id
+    stop_loss.transmit = take_profit_price <= 0  # Transmit if no TP
+    stop_loss.eTradeOnly = False
+    stop_loss.firmQuoteOnly = False
+
+    # Take profit child (LMT) — optional
+    take_profit = None
+    if take_profit_price > 0:
+        take_profit = IBAPIOrder()
+        take_profit.orderId = tp_id
+        take_profit.action = reverse_action
+        take_profit.orderType = "LMT"
+        take_profit.totalQuantity = quantity
+        take_profit.lmtPrice = take_profit_price
+        take_profit.tif = tif
+        take_profit.parentId = parent_id
+        take_profit.transmit = True  # Last child triggers full transmit
+        take_profit.eTradeOnly = False
+        take_profit.firmQuoteOnly = False
+
+    # Submit all orders
+    logger.info(
+        f"提交 Bracket 订单: {contract.symbol} {action} x{quantity} "
+        f"@ {limit_price}, SL={stop_loss_price}, TP={take_profit_price or 'N/A'}"
+    )
+
+    collector = OrderSubmitCollector()
+    collector.order_id = parent_id
+    orig_callbacks = _register_order_callbacks(api_client, collector)
+
+    try:
+        api_client.placeOrder(parent_id, ibapi_contract, parent)
+        api_client.placeOrder(sl_id, ibapi_contract, stop_loss)
+        if take_profit:
+            api_client.placeOrder(tp_id, ibapi_contract, take_profit)
+
+        collector.done_event.wait(timeout)
+
+        parent_result = OrderResult(
+            success=collector.perm_id > 0 or not collector.error_message,
+            order_id=parent_id,
+            perm_id=collector.perm_id,
+            status=collector.status or "Submitted",
+            filled_qty=collector.filled,
+            avg_fill_price=collector.avg_fill_price,
+            error_message=collector.error_message or "",
+        )
+
+        if parent_result.success:
+            logger.info(
+                f"✅ Bracket 订单已提交: parent={parent_id}, "
+                f"SL={sl_id}, TP={tp_id or 'N/A'}"
+            )
+        else:
+            logger.error(f"❌ Bracket 订单失败: {collector.error_message}")
+
+        return {
+            "parent_result": parent_result,
+            "parent_id": parent_id,
+            "stop_loss_id": sl_id,
+            "take_profit_id": tp_id,
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Bracket 订单提交异常: {e}")
+        raise_ibkr_error(OrderSubmitError, str(e))
+    finally:
+        _restore_callbacks(api_client, *orig_callbacks)
