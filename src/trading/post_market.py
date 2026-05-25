@@ -446,6 +446,61 @@ class PostMarketExecutor:
         logger.info(f"✅ 盘后报告：{report}.md")
 
 
+# ── 盘后分析摘要（供 watch daemon 调用） ──────────────────────────────
+def summarize_watch_orders():
+    """读取当日订单文件，统计 watch 信号执行情况
+
+    Returns:
+        dict: {"total": int, "success": int, "failed": int} 或空字典
+    """
+    from src.core.paths import get_order_file
+
+    logger.info("=" * 50)
+    logger.info("盘后分析 — watch 订单摘要")
+
+    order_file = get_order_file()
+    if not order_file.exists():
+        logger.info("今日无订单文件")
+        logger.info("盘后分析完成")
+        logger.info("=" * 50)
+        return {}
+
+    try:
+        with open(order_file) as f:
+            data = json.load(f)
+    except Exception as e:
+        logger.warning(f"读取订单文件异常: {e}")
+        logger.info("盘后分析完成")
+        logger.info("=" * 50)
+        return {}
+
+    watch_orders = [
+        o for o in data.get("orders_intra_day", [])
+        if o.get("signal", {}).get("source") == "watch"
+    ]
+
+    if watch_orders:
+        success_count = sum(1 for o in watch_orders if o.get("success"))
+        total = len(watch_orders)
+        failed = total - success_count
+        logger.info(f"今日 watch 订单: {total} 笔 ({success_count} 成功 / {failed} 失败)")
+        for o in watch_orders:
+            sig = o.get("signal", {})
+            logger.info(
+                f"  {sig.get('symbol', '?')} {sig.get('action', '?')} "
+                f"x{sig.get('quantity', '?')} @ ${o.get('avg_price', 0):.2f} "
+                f"→ {o.get('status', 'UNKNOWN')}"
+            )
+        logger.info("盘后分析完成")
+        logger.info("=" * 50)
+        return {"total": total, "success": success_count, "failed": failed}
+
+    logger.info("今日无 watch 订单")
+    logger.info("盘后分析完成")
+    logger.info("=" * 50)
+    return {}
+
+
 # 3. 暴露 execute 方法供 ibclient.py 使用
 def execute(date: str = None, account: str = None) -> bool:
     """外部调用接口 - 供 ibclient.py 使用

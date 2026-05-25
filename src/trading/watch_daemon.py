@@ -211,52 +211,6 @@ class WatchDaemon:
                 return False
             return True
 
-    def _post_market_analysis(self):
-        self.logger.info("=" * 50)
-        self.logger.info("收盘 — 盘后分析")
-
-        order_file = get_order_file()
-        if order_file.exists():
-            try:
-                with open(order_file) as f:
-                    data = json.load(f)
-                watch_orders = [o for o in data.get("orders_intra_day", [])
-                              if o.get("signal", {}).get("source") == "watch"]
-                if watch_orders:
-                    success_count = sum(1 for o in watch_orders if o.get("success"))
-                    self.logger.info(f"今日 watch 订单: {len(watch_orders)} 笔 "
-                                   f"({success_count} 成功 / {len(watch_orders) - success_count} 失败)")
-                    for o in watch_orders:
-                        sig = o.get("signal", {})
-                        self.logger.info(f"  {sig.get('symbol', '?')} {sig.get('action', '?')} x{sig.get('quantity', '?')} "
-                                       f"@ ${o.get('avg_price', 0):.2f} "
-                                       f"→ {o.get('status', 'UNKNOWN')}")
-                else:
-                    self.logger.info("今日无 watch 订单")
-            except Exception as e:
-                self.logger.warning(f"读取订单文件异常: {e}")
-        else:
-            self.logger.info("今日无订单文件")
-
-        for symbol in self.symbols:
-            strategy_names = [
-                s.name for s in self.factory.yaml_strategies
-            ]
-            self.logger.info(f"策略状态 [{symbol}]: {len(strategy_names)} 个模板就绪")
-            key = f"{symbol}_BUY"
-            last_time = self.cooldowns.get(key)
-            if last_time:
-                cd_min = self._get_cooldown_minutes(symbol)
-                elapsed = datetime.now() - last_time
-                remaining = max(0, cd_min * 60 - elapsed.total_seconds())
-                status = f"冷却中 (剩余 {remaining:.0f}s)" if remaining > 0 else "就绪"
-            else:
-                status = "就绪"
-            self.logger.info(f"  {symbol}: {status}")
-
-        self.logger.info("盘后分析完成")
-        self.logger.info("=" * 50)
-
     def _get_cooldown_minutes(self, symbol: str) -> int:
         base = self.symbol_configs.get(symbol, SymbolWatchConfig()).cooldown_minutes
         # TODO: 实盘模式下冷却倍率放大, 避免信号文件被同标的重复信号淹没
@@ -613,7 +567,6 @@ class WatchDaemon:
                     self._sleep_request = False
                     self.active = False
                     self._woken_manually = False
-                    self._post_market_analysis()
                     self.logger.info("收到休眠信号 (SIGUSR2)，进入 SLEEP 模式")
         
                 if not self.active:
@@ -632,7 +585,6 @@ class WatchDaemon:
                         pass  # 手动唤醒：非交易时段保持 ACTIVE
                     else:
                         self.active = False
-                        self._post_market_analysis()
                         self.logger.info("交易时段已结束，自动进入 SLEEP 模式")
                         remaining = 60
                         while remaining > 0 and self.running:
