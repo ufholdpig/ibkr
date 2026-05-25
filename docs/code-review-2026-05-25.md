@@ -285,3 +285,133 @@ breakout_detected = closes[-1] > consolidation_high and len(closes) >= 2 and clo
 | **signal_price 为 0.0** | 🟡 | `_create_signal` 未填充 `signal_price` 字段，`TradingSignal.signal_price` 默认 0.0。不阻断执行，但影响绩效分析中的滑点计算 |
 | **趋势模版零触发** | 🟡 | trend_entry 在当前市场条件下无一触发，需确认参数是否合理（回测验证 P0 未做） |
 | **bounce_sell F/AAPL qty=-1 检查** | 🟡 | 盘前无持仓信息的 SELL 信号不会被执行，但信号写入 JSON 文件造成冗余 |
+
+### 6.4 第二次运行 — 2026-05-25 12:29（重构后）
+
+经过 per-template 重构后手动唤醒，daemon 成功生成并提交 8 个信号：
+
+| 订单 | 结果 | 说明 |
+|------|------|------|
+| VRT BUY x5 | ✅ PreSubmitted | 明天 09:30 执行 |
+| NVDA BUY x5 | ✅ PreSubmitted | 明天 09:30 执行 |
+| AVGO BUY x5 | ✅ PreSubmitted | 明天 09:30 执行 |
+| DLR BUY x5 | ✅ PreSubmitted | 明天 09:30 执行 |
+| F SELL x5185 | ⚠️ Inactive | 同合约订单超过 15 个限制（之前有大量 F SELL 未清） |
+| AAPL SELL | ⏭️ 跳过 | 无持仓 |
+| VST SELL x260 | ✅ PreSubmitted | 明天 09:30 执行 |
+| CEG SELL x200 | ✅ PreSubmitted | 明天 09:30 执行 |
+
+注意到此次运行有 41 个策略实例（之前是 29 个），因为 per-template 模式下 `dip_buy`/`ma_buy`/`bounce_sell` 各展开到 8/6/8 个标的 + `trend_entry`/`stop_loss`/`value_buy` 新增实例。
+
+---
+
+## 七、配置重构审查 — per-symbol → per-template
+
+> 审查范围：commit `84b6b7b` — `config/ibkr.yaml`、`config/config.py`、`src/core/strategy.py`、`src/trading/watch_daemon.py`、`strategy/templates/*.yaml`
+> 关联文件：`src/core/conditions/`（条件引擎注册式架构）
+
+### 7.1 架构总评
+
+重构从"每个 symbol 配置自己的 strategy 列表"改为"每个 template 绑定多个 symbols"，配合 `StrategyTemplateEngine` 的 `{symbol}` 占位符替换，实现了策略配置的 DRY 原则。新增策略只需写一个 YAML 文件并绑定标的，无需改 Python 代码。
+
+### 7.2 各模块审查
+
+#### 7.2.1 配置层 — ibkr.yaml + config.py ✅
+
+```yaml
+# 新结构
+templates:
+  dip_buy: [F, AAPL, NVDA, AVGO, VST, CEG, DLR, VRT]
+  ma_buy: [F, AAPL, NVDA, AVGO, DLR, VRT]
+  bounce_sell: [F, AAPL, NVDA, AVGO, VST, CEG, DLR, VRT]
+  trend_entry: [NVDA, AVGO, VST, CEG, VRT]
+  trend_entry_strict: []
+  stop_loss: [NVDA, AVGO, VST, CEG, DLR, VRT, AAPL]
+  value_buy: [NVDA, AVGO, VST, CEG, DLR, VRT, AAPL]
+```
+
+- `WatchConfig.symbol_list` property 自动从所有 template 绑定去重推导标的列表，无需手动维护
+- `get_cooldown()` 封装 fallback 逻辑
+- 废弃的 `SymbolWatchConfig` 已完全移除
+
+#### 7.2.2 StrategyTemplateEngine (strategy.py:248-307) ✅
+
+- `expand()` 使用 `yaml.dump → str.replace({symbol}) → yaml.safe_load` 三步替换，比直接字符串替换安全
+- `_cache` 按 template_name 缓存原始 YAML，避免重复文件读取
+- `expand_all()` 支持批量展开
+- 异常路径（文件不存在、YAML 解析失败）返回 None，由调用方处理
+
+#### 7.2.3 StrategyFactory (strategy.py:309-497) ✅
+
+核心变化：
+
+| 旧 | 新 |
+|----|----|
+| 从 `watch_symbols: {symbol: SymbolWatchConfig}` 加载 per-symbol 策略 | 从 `watch_templates: {template_name: [symbols]}` 用 TemplateEngine 展开 |
+| `_load_yaml_file()` 逐个加载 strategy/ 下的 YAML | `load_all()` 通过 `expand_all()` 批量生成实例 |
+| `StrategyFactory.analyze()` 的双路径 guard | 保留并优化：`client is None` + `data_source != "yfinance"` 时明确 log |
+
+**潜在问题：**
+- `strategy.py:387` — 当 `client is None` 且 `market_data_source == "yfinance"` 时没有 log 说明在用 yfinance 回退，排查时需增加一行 info log
+- `_fetch_market_data` 的懒加载 `from src.core.market_data import MarketDataProvider` 工作正常，`Dict[str, Optional]` 已修复
+
+#### 7.2.4 WatchDaemon (watch_daemon.py) ✅
+
+- `__init__` 签名从 `symbols: dict` 改为 `watch_config: WatchConfig` + `symbol_filter: str` — 干净
+- `symbol_filter` 支持单标的启动（从 `symbol_list` 取交集）
+- `SymbolWatchConfig` 引用已完全移除
+- `StrategyFactory` 构造参数更新：`config_dir` → `template_dir`，`watch_symbols` → `watch_templates`
+
+**小问题：**
+- `watch_daemon.py:3-7` 的 docstring 仍写着"自身不做时间/假期判断"，但 `_is_trading_now()` 已在行 199 实现，建议更新
+
+#### 7.2.5 YAML 模版文件 (templates/*.yaml) ✅
+
+全部 9 个模版格式统一，`{symbol}` 占位符使用一致：
+
+| 模版 | 条件复杂度 | 说明 |
+|------|-----------|------|
+| `dip_buy.yaml` (38行) | 低 — OR(RSI, change_pct, AND(price_vs_ma, change_pct)) | 超卖/急跌买入 |
+| `ma_buy.yaml` (38行) | 低 — 同 dip_buy 结构，阈值不同 | 均线回调买入 |
+| `bounce_sell.yaml` (37行) | 低 — OR(RSI, change_pct, AND(price_vs_ma, change_pct)) | 超买反弹卖出 |
+| `trend_entry.yaml` (52行) | 高 — AND(ma_stack, sma_slope, ma_spread, volume, RSI, OR(consolidation_breakout, retrace_breakout)) | 趋势跟踪入场 |
+| `trend_entry_strict.yaml` (64行) | 高 — AND（同上 + sma_slope_200 + fib_time） | 严格趋势入场 |
+| `stop_loss.yaml` (24行) | 极低 — price_vs_cost < 0.85 | 硬性止损 |
+| `value_buy.yaml` (26行) | 极低 — price_vs_cost < 0.90 | 价值摊薄买入 |
+| `conservative_buy/sell.yaml` (25行) | 低 | 保守策略 |
+
+特别注意到 `trend_entry_strict.yaml` 利用条件树嵌套（行 37-46 的 OR 内嵌 AND）实现了 `(consolidation_breakout AND fib_time) OR retrace_breakout` 的组合逻辑。
+
+#### 7.2.6 Conditions 引擎 (src/core/conditions/) ✅
+
+注册式架构设计良好：
+
+```
+__init__.py  → pkgutil 自动发现所有 .py 文件
+    base.py  → ConditionEvaluator 基类 + ConditionContext
+    rsi.py, ma_cross.py, ma_spread.py, ... → @register 装饰器注册
+```
+
+`_eval_leaf`（strategy.py:211-220）是统一求值入口，`get_registry()` 返回注册表用于错误提示。新增条件类型只需写一个文件 + `@register`，无需修改任何现有代码。
+
+### 7.3 本轮发现的新问题
+
+| 问题 | 严重度 | 说明 |
+|------|--------|------|
+| `watch_daemon.py` docstring 过时 | 🟢 | 写的是"自身不做时间/假期判断"，与实际逻辑不符 |
+| `strategy.py:387` yfinance 回退缺少 info log | 🟢 | 建议加一行 `self.logger.info("StrategyFactory.client 未设置，使用 yfinance 回退")` |
+
+### 7.4 与上一轮审查（Section 三）的关联
+
+上次发现的 8 个问题（3.1~3.8）在此次重构中**均未修复**，与新架构无冲突：
+
+| 原问题 | 状态 | 说明 |
+|--------|------|------|
+| 3.1 v3 字段序列化丢失 | ❌ 未修 | 独立于架构变更 |
+| 3.2 _create_signal 缺失字段 | ❌ 未修 | 同上 |
+| 3.3 PendingSignalStore 未接入 | ❌ 未修 | 同上 |
+| 3.4 bracket order 未接入 | ❌ 未修 | 同上 |
+| 3.5 regime_detector 未传入 | ❌ 未修 | 同上 |
+| 3.6 consolidation 计算脆弱 | ❌ 未修 | 同上 |
+| 3.7 retrace_breakout 简化 | 🟡 设计决定 | 同上 |
+| 3.8 consolidation 单日触发 | 🟡 设计决定 | 同上 |
