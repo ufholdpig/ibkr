@@ -1,0 +1,25 @@
+strategy_id: "CONSERVATIVE_BUY_{symbol}"
+name: "{symbol} 保守买入"
+description: "{symbol} 测试订单排队场景，以市价买入1股"
+enabled: false
+priority: 50
+weight: 1.0
+state: ACTIVE
+type: conservative_buy
+regime_weights:
+  BULL: 1.0
+  BEAR: 1.0
+  SIDEWAYS: 1.0
+signal_factors: ["market_data"]
+conditions:
+  - type: "price_vs_cost"
+    operator: "<"
+    threshold_ratio: 2.0
+action:
+  type: "MARKET_BUY"
+  quantity: 1
+  ticker: "{symbol}"
+  tif: "DAY"
+  risk:
+    max_position_percent: 1.0
+    max_order_value: 100.0

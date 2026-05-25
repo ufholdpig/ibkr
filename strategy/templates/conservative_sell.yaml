@@ -1,0 +1,25 @@
+strategy_id: "CONSERVATIVE_SELL_{symbol}"
+name: "{symbol} 保守卖出"
+description: "{symbol} 测试订单排队场景，以市价卖出1股"
+enabled: false
+priority: 50
+weight: 1.0
+state: ACTIVE
+type: conservative_sell
+regime_weights:
+  BULL: 1.0
+  BEAR: 1.0
+  SIDEWAYS: 1.0
+signal_factors: ["market_data"]
+conditions:
+  - type: "price_vs_cost"
+    operator: "<"
+    threshold_ratio: 2.0
+action:
+  type: "MARKET_SELL"
+  quantity: 1
+  ticker: "{symbol}"
+  tif: "DAY"
+  risk:
+    max_position_percent: 1.0
+    max_order_value: 100.0

@@ -1,0 +1,26 @@
+strategy_id: "VALUE_BUY_{symbol}"
+name: "{symbol} 价值低估买入"
+description: "{symbol} 市价低于成本 10% 时限价买入，摊薄成本"
+enabled: true
+priority: 10
+weight: 1.0
+state: ACTIVE
+type: value_buy
+regime_weights:
+  BULL: 1.0
+  BEAR: 1.0
+  SIDEWAYS: 1.0
+signal_factors: ["market_data"]
+conditions:
+  - type: "price_vs_cost"
+    operator: "<"
+    threshold_ratio: 0.90
+action:
+  type: "LIMIT_BUY"
+  quantity: 10
+  ticker: "{symbol}"
+  price_offset: -0.02
+  tif: "DAY"
+  risk:
+    max_position_percent: 5.0
+    max_order_value: 1000.0

@@ -38,54 +38,30 @@ ibkr:
       post_market: "reports/paper/post_market"
 
   # Watch 守护进程配置
-  # symbols: 每只股票独立指定模版和策略文件
+  # templates: 以模版为中心，每个模版绑定适用的标的列表
   watch:
     poll_interval: 5
     indicator_refresh_minutes: 30
     template_dir: "strategy/templates"
-    strategy_dir: "strategy/strategies"
     # 实盘冷却倍率: Paper 冷却 x 此值 = 实盘冷却 (4x = 15min→60min, 30min→120min)
-    # Paper 保持高频方便测试, 实盘大幅降低信号频率避免信号文件噪声
     real_cooldown_multiplier: 4
-    symbols:
-      F:
-        cooldown_minutes: 15
-        templates: ["dip_buy", "ma_buy", "bounce_sell"]
-        strategies: []
-      AAPL:
-        cooldown_minutes: 15
-        templates: ["dip_buy", "ma_buy", "bounce_sell"]
-        strategies: []
 
-      # AI储能 - 优先推荐（52周低点附近 + Forward PE低 + 目标空间大）
-      VST:
-        cooldown_minutes: 20
-        templates: ["trend_entry", "dip_buy", "bounce_sell"]
-        strategies: []
-      CEG:
-        cooldown_minutes: 20
-        templates: ["trend_entry", "dip_buy", "bounce_sell"]
-        strategies: []
+    cooldown_minutes:
+      default: 20
+      F: 15
+      AAPL: 15
+      NVDA: 30
+      AVGO: 30
+      VRT: 30
 
-      # AI算力 - 等待回调建仓
-      NVDA:
-        cooldown_minutes: 30
-        templates: ["trend_entry", "dip_buy", "ma_buy", "bounce_sell"]
-        strategies: []
-      AVGO:
-        cooldown_minutes: 30
-        templates: ["trend_entry", "dip_buy", "ma_buy", "bounce_sell"]
-        strategies: []
-
-      # AI基础设施 - 防御性持仓
-      DLR:
-        cooldown_minutes: 20
-        templates: ["dip_buy", "ma_buy", "bounce_sell"]
-        strategies: []
-      VRT:
-        cooldown_minutes: 30
-        templates: ["trend_entry", "dip_buy", "ma_buy", "bounce_sell"]
-        strategies: []
+    templates:
+      dip_buy: [F, AAPL, NVDA, AVGO, VST, CEG, DLR, VRT]
+      ma_buy: [F, AAPL, NVDA, AVGO, DLR, VRT]
+      bounce_sell: [F, AAPL, NVDA, AVGO, VST, CEG, DLR, VRT]
+      trend_entry: [NVDA, AVGO, VST, CEG, VRT]
+      trend_entry_strict: []
+      stop_loss: [NVDA, AVGO, VST, CEG, DLR, VRT, AAPL]
+      value_buy: [NVDA, AVGO, VST, CEG, DLR, VRT, AAPL]
 
   # TFSA 风控引擎配置
   # Paper 测试时 fail_closed=false，实盘部署前设为 true

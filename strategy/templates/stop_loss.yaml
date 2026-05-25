@@ -1,0 +1,24 @@
+strategy_id: "STOP_LOSS_{symbol}"
+name: "{symbol} 硬性止损"
+description: "{symbol} 亏损超过 15% 时市价卖出全部持仓，控制风险"
+enabled: true
+priority: 100
+weight: 1.0
+state: ACTIVE
+type: stop_loss
+regime_weights:
+  BULL: 1.0
+  BEAR: 1.0
+  SIDEWAYS: 1.0
+signal_factors: ["market_data"]
+conditions:
+  - type: "price_vs_cost"
+    operator: "<"
+    threshold_ratio: 0.85
+action:
+  type: "MARKET_SELL"
+  quantity: "ALL"
+  ticker: "{symbol}"
+  tif: "DAY"
+  risk:
+    max_loss_percent: 15.0

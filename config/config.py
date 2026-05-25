@@ -42,26 +42,30 @@ class ReportConfig:
         "post_market": "reports/paper/post_market"
     })
 @dataclass
-class SymbolWatchConfig:
-    """个股 Watch 配置"""
-    templates: list = field(default_factory=list)
-    strategies: list = field(default_factory=list)
-    cooldown_minutes: int = 15
-
-
-@dataclass
 class WatchConfig:
-    """Watch 守护进程配置"""
-    symbols: dict = field(default_factory=dict)  # symbol -> SymbolWatchConfig
+    """Watch 守护进程配置 — 以模版为中心
+
+    templates: {template_name: [symbols]} — 每个模版绑定适用的标的列表
+    cooldown_minutes: {symbol: minutes, "default": minutes} — 标的冷却时间
+    """
+    templates: dict = field(default_factory=dict)
+    cooldown_minutes: dict = field(default_factory=lambda: {"default": 20})
     poll_interval: int = 5
     indicator_refresh_minutes: int = 30
     template_dir: str = "strategy/templates"
-    strategy_dir: str = "strategy/strategies"
     real_cooldown_multiplier: float = 4.0
 
     @property
     def symbol_list(self) -> list[str]:
-        return list(self.symbols.keys())
+        """从所有模版绑定中推导唯一标的列表"""
+        symbols = set()
+        for syms in self.templates.values():
+            symbols.update(syms)
+        return sorted(symbols)
+
+    def get_cooldown(self, symbol: str) -> int:
+        """获取标的的冷却时间，未配置则用 default"""
+        return self.cooldown_minutes.get(symbol, self.cooldown_minutes.get("default", 20))
 
 
 @dataclass
@@ -147,26 +151,15 @@ class IBKRConfig:
         
         # 加载 watch 守护进程配置
         watch_data = ibkr_data.get("watch", {})
-        symbols_raw = watch_data.get("symbols", {})
-        if isinstance(symbols_raw, list):
-            symbols_raw = {s.upper(): SymbolWatchConfig(templates=["dip_buy", "bounce_sell"]) for s in symbols_raw}
-        elif isinstance(symbols_raw, dict):
-            symbols_raw = {
-                sym.upper(): SymbolWatchConfig(
-                    templates=cfg.get("templates", []),
-                    strategies=cfg.get("strategies", []),
-                    cooldown_minutes=cfg.get("cooldown_minutes", 15),
-                )
-                for sym, cfg in symbols_raw.items()
-            }
-        else:
-            raise TypeError(f"watch.symbols 必须是 list 或 dict，当前: {type(symbols_raw)}")
+        templates_raw = watch_data.get("templates", {})
+        cooldown_raw = watch_data.get("cooldown_minutes", {"default": 20})
+
         watch = WatchConfig(
-            symbols=symbols_raw,
+            templates=templates_raw,
+            cooldown_minutes=cooldown_raw,
             poll_interval=watch_data.get("poll_interval", 5),
             indicator_refresh_minutes=watch_data.get("indicator_refresh_minutes", 30),
             template_dir=watch_data.get("template_dir", "strategy/templates"),
-            strategy_dir=watch_data.get("strategy_dir", "strategy/strategies"),
             real_cooldown_multiplier=watch_data.get("real_cooldown_multiplier", 4.0),
         )
         

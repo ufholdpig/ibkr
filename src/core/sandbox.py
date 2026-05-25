@@ -49,7 +49,7 @@ class SandboxDeployer:
         ))
         self.strategy_dir = Path(cfg.get(
             "strategy_dir",
-            Path(__file__).parent.parent.parent / "strategy" / "strategies",
+            Path(__file__).parent.parent.parent / "strategy" / "templates",
         ))
         self.validation_days = cfg.get("validation_days", 7)
         self.pnl_deviation_threshold = cfg.get("pnl_deviation_threshold", 5.0)

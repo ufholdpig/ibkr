@@ -309,24 +309,17 @@ class StrategyTemplateEngine:
 class StrategyFactory:
     """策略工厂：动态加载 YAML 策略模板，按模板声明的 signal_factors 自动获取数据
 
-    Supports two loading paths:
-    - templates: via StrategyTemplateEngine, expanded per-symbol from config
-    - strategies: direct YAML files from strategy_dir
+    watch_templates format: {template_name: [symbols]}
+    Each template is expanded for each bound symbol via StrategyTemplateEngine.
     """
-    def __init__(self, config_dir: str = None, regime_detector=None, client=None,
+    def __init__(self, regime_detector=None, client=None,
                  market_data_source: str = "auto", template_dir: str = None,
-                 watch_symbols: Dict = None):
-        if config_dir is None:
-            config_dir = PROJECT_ROOT / "strategy" / "strategies"
-        elif isinstance(config_dir, str):
-            config_dir = Path(config_dir)
-
-        self.config_dir = Path(config_dir)
+                 watch_templates: Dict = None):
         self.yaml_strategies: List["YAMLTemplateStrategy"] = []
         self.regime_detector = regime_detector
         self.client = client
         self.market_data_source = market_data_source
-        self.watch_symbols = watch_symbols or {}
+        self.watch_templates = watch_templates or {}
         self.logger = logging.getLogger("StrategyFactory")
 
         if template_dir is None:
@@ -338,54 +331,23 @@ class StrategyFactory:
         self.load_all()
 
     def load_all(self):
-        """Load strategies from both template expansion and direct strategy files.
+        """Expand all templates for their bound symbols.
 
-        1. Expand templates for each symbol in watch_symbols (if templates[] specified)
-        2. Load direct strategy files from strategy_dir (per-symbol strategies[] or all *.yaml)
+        Format: {template_name: [symbol1, symbol2, ...]}
         """
-        # Path 1: Template expansion
         templates_loaded = 0
-        for symbol, sym_config in self.watch_symbols.items():
-            if not isinstance(sym_config, dict):
+        for template_name, symbols in self.watch_templates.items():
+            if not isinstance(symbols, list):
                 continue
-            template_names = sym_config.get("templates", [])
-            for tmpl_config in self.template_engine.expand_all(symbol, template_names):
-                strategy = YAMLTemplateStrategy(tmpl_config)
-                self.yaml_strategies.append(strategy)
-                templates_loaded += 1
+            for symbol in symbols:
+                config = self.template_engine.expand(template_name, symbol)
+                if config:
+                    strategy = YAMLTemplateStrategy(config)
+                    self.yaml_strategies.append(strategy)
+                    templates_loaded += 1
 
         if templates_loaded > 0:
             self.logger.info(f"从模版展开 {templates_loaded} 个策略实例")
-
-        # Path 2: Direct strategy files
-        if not self.config_dir.exists():
-            self.logger.warning(f"策略配置目录不存在：{self.config_dir}")
-            return
-
-        # If watch_symbols specifies per-symbol strategies[], load only those
-        specified_files = set()
-        for symbol, sym_config in self.watch_symbols.items():
-            if not isinstance(sym_config, dict):
-                continue
-            for fname in sym_config.get("strategies", []):
-                specified_files.add(fname)
-
-        if specified_files:
-            for fname in specified_files:
-                filepath = self.config_dir / fname
-                if filepath.exists():
-                    self._load_yaml_file(filepath)
-                else:
-                    self.logger.warning(f"指定策略文件不存在: {filepath}")
-        else:
-            # Fallback: load all YAML files in strategy_dir (backward compatible)
-            yaml_files = list(self.config_dir.glob("*.yaml"))
-            for subdir in self.config_dir.iterdir():
-                if subdir.is_dir():
-                    yaml_files.extend(subdir.glob("*.yaml"))
-            self.logger.info(f"发现 {len(yaml_files)} 个策略配置文件")
-            for yaml_file in yaml_files:
-                self._load_yaml_file(yaml_file)
 
     def _load_yaml_file(self, filepath: Path):
         """加载单个 YAML 策略文件"""

@@ -331,7 +331,7 @@ class ApprovalQueue:
             # 加载原策略配置
             from src.core.paths import get_path
             import yaml
-            strategy_dir = get_path("data").parent / "strategy" / "strategies"
+            strategy_dir = get_path("data").parent / "strategy" / "templates"
             yaml_file = None
             for f in strategy_dir.glob("*.yaml"):
                 cfg = yaml.safe_load(f.read_text())

@@ -30,7 +30,7 @@ from src.core.performance import PerformanceTracker
 from src.core.models import StrategyResult
 from src.core.strategy import StrategyFactory
 from src.core.signal import convert_signal_to_dict
-from config.config import load_config, WatchConfig, RiskConfig, SymbolWatchConfig
+from config.config import load_config, WatchConfig, RiskConfig
 
 logger = get_logger(__name__)
 audit_logger = get_logger("audit")
@@ -79,11 +79,9 @@ def send_signal(sig: int) -> bool:
 
 
 class WatchDaemon:
-    def __init__(self, symbols: dict,
-                 watch_config: WatchConfig | None = None,
-                 risk_config: RiskConfig | None = None):
-        self.symbol_configs: dict[str, SymbolWatchConfig] = {s.upper(): c for s, c in symbols.items()}
-        self.symbols = list(self.symbol_configs.keys())
+    def __init__(self, watch_config: WatchConfig | None = None,
+                 risk_config: RiskConfig | None = None,
+                 symbol_filter: str | None = None):
         self.logger = get_logger("WatchDaemon")
 
         if watch_config is None:
@@ -93,6 +91,12 @@ class WatchDaemon:
                 risk_config = full_config.risk_engine
 
         self.watch_config = watch_config
+        all_symbols = watch_config.symbol_list
+        if symbol_filter:
+            sym = symbol_filter.upper()
+            self.symbols = [sym] if sym in all_symbols else all_symbols
+        else:
+            self.symbols = all_symbols
         self.POLL_INTERVAL_SECONDS = watch_config.poll_interval
         self.real_cooldown_multiplier = getattr(watch_config, 'real_cooldown_multiplier', 4.0)
 
@@ -130,16 +134,11 @@ class WatchDaemon:
         self._connect_ibkr_client()
 
         config = load_config()
-        watch_symbols_dict = {
-            sym: {"templates": sc.templates, "strategies": sc.strategies}
-            for sym, sc in config.watch.symbols.items()
-        }
         self.factory = StrategyFactory(
-            config_dir=config.watch.strategy_dir,
             client=self._ibkr_client,
             market_data_source=config.market_data_source,
             template_dir=config.watch.template_dir,
-            watch_symbols=watch_symbols_dict,
+            watch_templates=config.watch.templates,
         )
         self.logger.info("策略引擎已就绪（%d 个策略实例）", len(self.factory.yaml_strategies))
 
@@ -212,9 +211,7 @@ class WatchDaemon:
             return True
 
     def _get_cooldown_minutes(self, symbol: str) -> int:
-        base = self.symbol_configs.get(symbol, SymbolWatchConfig()).cooldown_minutes
-        # TODO: 实盘模式下冷却倍率放大, 避免信号文件被同标的重复信号淹没
-        #       全自动实盘时还需叠加每日交易预算 (max_trades_per_day)
+        base = self.watch_config.get_cooldown(symbol)
         if self.risk_engine and not self.risk_engine._is_paper:
             return int(base * self.real_cooldown_multiplier)
         return base
@@ -655,17 +652,7 @@ def run_watch(symbol: str | None = None):
     from src.core.paths import set_data_mode, resolve_data_mode
     cfg = load_config()
     set_data_mode(resolve_data_mode(cfg.gateway.account_id or ""))
-    if symbol:
-        sym_upper = symbol.upper()
-        sym_cfg = cfg.watch.symbols.get(sym_upper)
-        if not sym_cfg:
-            print(f"⚠️ 配置中未找到 {sym_upper}，使用默认策略")
-            from config.config import SymbolWatchConfig
-            sym_cfg = SymbolWatchConfig(strategies=["conservative_buy.yaml", "conservative_sell.yaml"])
-        symbols = {sym_upper: sym_cfg}
-    else:
-        symbols = cfg.watch.symbols
-    daemon = WatchDaemon(symbols, cfg.watch, cfg.risk_engine)
+    daemon = WatchDaemon(cfg.watch, cfg.risk_engine, symbol_filter=symbol)
     daemon.run()
 
 
