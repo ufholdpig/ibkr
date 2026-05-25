@@ -97,6 +97,27 @@ instruments:
     yfinance_symbol: "MNQ=F"
 ```
 
+#### `front_month` 字段说明
+
+| 属性 | 说明 |
+|------|------|
+| 格式 | `YYYYMM`，如 `"202506"` 表示 2025 年 6 月合约 |
+| 用途 | 传递给 IBKR API 的 `Contract.lastTradeDateOrContractMonth`，用于指定交易的具体合约月份 |
+| 谁使用 | `put_order.py` 调用 `create_contract(expiry=spec.front_month)` |
+| 何时更新 | 每个季度（ES/NQ 为 3/6/9/12 月第三个周五到期前），需手动或由 Phase 7 滚动模块自动更新为下一合约月 |
+| 不更新的后果 | 到期后 IBKR 将拒绝该合约的订单（error 200: No security definition） |
+
+**季度合约滚动日历** (CME E-mini / Micro):
+
+| 合约月代码 | 到期月 | front_month 值 | 建议滚动时间 |
+|-----------|--------|---------------|-------------|
+| H | 3月 | `"202503"` | 3月第三个周五前 5 天 |
+| M | 6月 | `"202506"` | 6月第三个周五前 5 天 |
+| U | 9月 | `"202509"` | 9月第三个周五前 5 天 |
+| Z | 12月 | `"202512"` | 12月第三个周五前 5 天 |
+
+> **当前状态**：Phase 7（自动滚动）尚未实现，需要手动编辑 `config/instruments.yaml` 更新 `front_month` 值。
+
 **对应 Python dataclass**（新增至 `config/config.py`）：
 
 ```python
@@ -590,10 +611,180 @@ watch_daemon.run()
 
 ---
 
-## 八、测试计划
+## 八、测试指南（详细操作手册）
 
-1. **单元测试**：InstrumentRegistry 加载 + 默认值回退
-2. **集成测试**：Paper 环境提交 MES 订单验证合约构造
-3. **数据验证**：yfinance `ES=F` 数据与 IBKR 实时对比
-4. **风控测试**：验证 notional 计算含 multiplier
-5. **滚动测试**：模拟到期场景验证检测逻辑
+### 8.1 前置条件
+
+| 条件 | 说明 |
+|------|------|
+| IBKR Gateway/TWS 运行 | Paper 账户 (DU 前缀) 连接端口 4002 |
+| Python 依赖安装 | `pip install ibapi pyyaml yfinance exchange_calendars` |
+| 账户有期货交易权限 | Paper 账户默认开启 CME 权限；若报错检查 TWS Account > Trading Permissions |
+| CME 市场数据订阅 | TWS > Account Management > Market Data 勾选 CME (Paper 免费延迟行情) |
+
+### 8.2 启用期货策略（步骤）
+
+**Step 1**: 编辑 `config/ibkr.yaml`，将期货 symbol 加入 `futures_trend` 模板：
+
+```yaml
+    templates:
+      # ... 其他模板 ...
+      futures_trend: [MES]    # 建议先用 Micro (MES/MNQ)，乘数小风险低
+```
+
+**Step 2**: 确认 `config/instruments.yaml` 中 `front_month` 是当前合约月：
+
+```yaml
+  MES:
+    sec_type: FUT
+    exchange: CME
+    currency: USD
+    multiplier: 5
+    trading_class: MES
+    roll_rule: quarterly
+    front_month: "202506"      # ← 确认未到期！当前是 2026 年需改为 "202609"
+    yfinance_symbol: "MES=F"
+```
+
+> **关键**：`front_month` 必须是当前活跃合约月，过期值会导致 IBKR 报错 "No security definition"。
+> 查看当前活跃合约月：在 TWS 中搜索 MES，看哪个月份有行情。
+
+**Step 3**: 确认策略模板 `strategy/templates/futures_trend.yaml` 中 `quantity` 适合测试：
+
+```yaml
+action:
+  type: "LIMIT_BUY"
+  quantity: 1            # MES x1 = ~$5 x 5400 = ~$27000 notional
+  price_offset: -0.001
+```
+
+### 8.3 运行测试
+
+#### 方式 A：通过 watch_daemon 完整流程
+
+```bash
+# 单 symbol 监控（推荐调试用）
+python3 src/trading/watch_daemon.py MES
+```
+
+观察日志：
+- `StrategyFactory` 是否加载了 `FUTURES_TREND_MES` 策略
+- `MarketDataProvider` 是否使用 `MES=F` 拉取 yfinance 数据
+- 条件评估是否通过/未通过及原因
+
+#### 方式 B：仅验证信号生成（不提交订单）
+
+设置 `approval_required: true` 阻止自动执行：
+
+```yaml
+  risk_engine:
+    approval_required: true    # ← 信号入审批队列，不自动提交
+```
+
+然后运行 daemon，信号会出现在审批队列但不会提交到 IBKR。
+
+#### 方式 C：直接运行回归测试
+
+```bash
+python3 tests/test_instrument_registry.py
+```
+
+验证 registry、contract 构造、risk engine 的基本正确性（不需要 IBKR 连接）。
+
+### 8.4 验证检查清单
+
+| # | 验证项 | 如何确认 | 预期结果 |
+|---|--------|----------|----------|
+| 1 | Registry 加载 | 日志或测试脚本 | `get("MES").sec_type == "FUT"`, `multiplier == 5` |
+| 2 | yfinance 数据 | daemon 日志 `fetch_historical` | 使用 `MES=F` ticker，返回非空 K 线 |
+| 3 | 条件评估 | daemon 日志 | 显示 `ma_stack`/`sma_slope`/`rsi`/`volume_spike` 各条件是否 pass |
+| 4 | 信号文件写入 | 检查 `data/paper/signals/signal_YYYYMMDD.json` | 含 `strategy_id: "FUTURES_TREND_MES"` 的信号条目 |
+| 5 | Contract 构造 | daemon/put_order 日志 | `secType=FUT, exchange=CME, expiry=202506, multiplier=5, tradingClass=MES` |
+| 6 | 风控跳过 TFSA | 日志无 `SHORT_SELL` / `DAY_TRADING` / `YEARLY_TRADE_LIMIT` 拦截 | 只检查 position_limit 和 order_value |
+| 7 | Notional 正确 | 风控日志的 `order_value` | qty=1, price=5400 → notional = $27,000 (而非 $5,400) |
+| 8 | 订单提交 | `data/paper/orders/order_YYYYMMDD.json` | 含 MES 订单，status 为 Submitted/Filled |
+| 9 | 现有股票不受影响 | 同时跑 NVDA 等 | 股票信号正常生成，TFSA 规则正常执行 |
+
+### 8.5 常见问题排查
+
+| 错误 | 原因 | 解决 |
+|------|------|------|
+| `No security definition has been found` | `front_month` 过期或格式错误 | 更新 `instruments.yaml` 中的 `front_month` 为当前活跃合约月 |
+| `yfinance [MES] 下载历史数据为空` | yfinance 对 `MES=F` 支持不稳定 | 改用 `ES=F`（ES 流动性高，数据更可靠），或切换 `data_source: ibkr` |
+| `风控拦截: ORDER_VALUE_LIMIT` | notional (qty × price × multiplier) 超过 `max_order_value_pct` | 降低 quantity 或调整 `max_order_value_pct` |
+| 条件始终不触发 | 期货市场状态不满足（如横盘无趋势） | 降低 `futures_trend.yaml` 中的阈值做测试，或手动构造信号验证执行层 |
+| `registry.get("MES")` 返回 STK | `instruments.yaml` 未被加载 | 确认文件路径正确，YAML 格式无语法错误 |
+
+### 8.6 手动构造信号测试执行层（跳过条件评估）
+
+如果条件不满足无法触发信号，可手动写入信号文件来测试 put_order → IBKR 执行层：
+
+```bash
+# 创建今日信号文件（Paper 模式）
+cat > data/paper/signals/signal_$(date +%Y%m%d).json << 'EOF'
+{
+  "generated": "2026-05-25 09:00:00",
+  "signals_pre_market": [
+    {
+      "strategy_name": "MES 期货趋势跟踪",
+      "strategy_id": "FUTURES_TREND_MES",
+      "symbol": "MES",
+      "action": "BUY",
+      "quantity": 1,
+      "target_price": 5380.0,
+      "reason": "手动测试",
+      "confidence": 0.8,
+      "weight": 1.0,
+      "priority": 25,
+      "stop_loss_type": "fixed_pct",
+      "stop_loss_pct": 0.02,
+      "take_profit_pct": 0.06,
+      "trailing_stop_pct": 0.03,
+      "processed": false
+    }
+  ],
+  "signals_intra_day": []
+}
+EOF
+```
+
+然后运行 pre_market executor：
+
+```bash
+python3 -c "from src.trading.pre_market import execute; execute()"
+```
+
+检查 `data/paper/orders/order_YYYYMMDD.json` 中是否出现对应订单。
+
+### 8.7 `instruments.yaml` 字段完整参考
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `sec_type` | str | 是 | 证券类型：`FUT` (期货)、`STK` (股票) |
+| `exchange` | str | 是 | 交易所：`CME` (芝商所)、`SMART` (智能路由) |
+| `currency` | str | 是 | 货币：`USD` |
+| `multiplier` | int | 是 | 合约乘数：ES=50, MES=5, NQ=20, MNQ=2 |
+| `trading_class` | str | 是 | 交易类别，IBKR 用于区分同 symbol 的不同产品 |
+| `roll_rule` | str | 否 | 滚动规则：`quarterly` (3/6/9/12月) / `monthly` |
+| `front_month` | str | **是** | 当前活跃合约月 `YYYYMM`，**过期必须手动更新** |
+| `yfinance_symbol` | str | 否 | yfinance ticker 覆盖，如 `ES=F`；留空则使用原始 symbol |
+
+### 8.8 测试完成后清理
+
+```bash
+# 如果不想保留期货模板绑定
+# 将 ibkr.yaml 中 futures_trend 改回空列表:
+#   futures_trend: []
+```
+
+---
+
+## 九、未实现功能（Phase 7+）
+
+| 功能 | 状态 | 说明 |
+|------|------|------|
+| 合约自动滚动 | 未实现 | 需监控 `front_month` 到期，自动平旧开新并更新 YAML |
+| tick size 对齐 | 未实现 | ES tick=0.25, MES tick=0.25; 限价需 `round_to_tick()` |
+| 交易时段判断 | 未适配 | CME Globex 近 23h 交易，当前 daemon 只判断 NYSE 9:30-16:00 |
+| 保证金检查 | 未实现 | 期货使用保证金而非全额，风控应检查 margin requirement |
+| 多账户分流 | 未实现 | TFSA 不能交易期货，需路由到 margin 账户 |
