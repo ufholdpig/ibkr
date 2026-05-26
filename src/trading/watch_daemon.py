@@ -592,16 +592,14 @@ class WatchDaemon:
                             remaining -= 1
                         continue
                 elif not self._is_trading_now():
-                    if self._woken_manually:
-                        pass  # 手动唤醒：非交易时段保持 ACTIVE
-                    else:
-                        self.active = False
-                        self.logger.info("交易时段已结束，自动进入 SLEEP 模式")
-                        remaining = 60
-                        while remaining > 0 and self.running:
-                            time.sleep(min(1, remaining))
-                            remaining -= 1
-                        continue
+                    self._woken_manually = False
+                    self.active = False
+                    self.logger.info("交易时段已结束，自动进入 SLEEP 模式")
+                    remaining = 60
+                    while remaining > 0 and self.running:
+                        time.sleep(min(1, remaining))
+                        remaining -= 1
+                    continue
 
                 is_paper = getattr(self.risk_engine, '_is_paper', True) if self.risk_engine else True
 

@@ -55,13 +55,13 @@ ibkr:
       VRT: 30
 
     templates:
-      dip_buy: [F, AAPL, NVDA, AVGO, VST, CEG, DLR, VRT]
-      ma_buy: [F, AAPL, NVDA, AVGO, DLR, VRT]
-      bounce_sell: [F, AAPL, NVDA, AVGO, VST, CEG, DLR, VRT]
-      trend_entry: [NVDA, AVGO, VST, CEG, VRT]
+      dip_buy: [VRT, NVDA]
+      ma_buy: [DLR, VRT]
+      bounce_sell: [F, VST, CEG]
+      trend_entry: [COST, BCE, BAC, AAPL, NVDA, BA]
       trend_entry_strict: []
-      stop_loss: [NVDA, AVGO, VST, CEG, DLR, VRT, AAPL]
-      value_buy: [NVDA, AVGO, VST, CEG, DLR, VRT, AAPL]
+      stop_loss: [NVDA, DLR, VRT]
+      value_buy: []
       futures_trend: []
 
   # TFSA 风控引擎配置
