@@ -600,10 +600,14 @@ class YAMLTemplateStrategy:
         - 不做实盘卖空检查（执行层职责）
         """
         action_type = self.action_config.get("type", "LIMIT_BUY")
-       
+        
         if action_type == "LIMIT_BUY" or action_type == "MARKET_BUY":
             action = SignalAction.BUY
-            quantity = self.action_config.get("quantity", 10)
+            raw_qty = self.action_config.get("quantity", 10)
+            if isinstance(raw_qty, str):
+                raw_qty = -1 if raw_qty.upper() == "ALL" else int(raw_qty)
+            # -1 表示"全部空头持仓"，由执行层替换为实际数量
+            quantity = raw_qty if raw_qty > 0 else -1
             price_offset = self.action_config.get("price_offset", -0.02)
             limit_price = market_price * (1 + price_offset)
         elif action_type == "MARKET_SELL":

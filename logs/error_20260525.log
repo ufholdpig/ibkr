@@ -1,3 +1,0 @@
-2026-05-25 00:31:22 [ERROR] src.core.client: ❌ IBKR API 依赖缺失: No module named 'ibapi'
-2026-05-25 00:31:22 [ERROR] src.core.client: 请安装依赖: pip install ibapi>=9.81
-2026-05-25 00:31:22 [ERROR] src.core.client: 参考文档: docs/important.md

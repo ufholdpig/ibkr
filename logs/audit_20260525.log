@@ -1,7 +1,0 @@
-2026-05-25 00:31:33 [INFO] src.core.pending_signals: Pending signal stored: NVDA BUY (execute after 2026-05-25)
-2026-05-25 00:31:33 [INFO] src.core.pending_signals: Retrieved 1 ready pending signals
-2026-05-25 00:31:33 [INFO] StrategyFactory: 加载全部策略...
-2026-05-25 00:31:33 [INFO] StrategyFactory: 从模版展开 27 个策略实例
-2026-05-25 00:31:33 [INFO] StrategyFactory: 发现 8 个策略配置文件
-2026-05-25 00:31:33 [INFO] StrategyFactory: 已加载策略：STOP_LOSS_001 (硬性止损)
-2026-05-25 00:31:33 [INFO] StrategyFactory: 已加载策略：VALUE_BUY_001 (价值低估买入)

@@ -249,16 +249,18 @@ def process_signals(client: IBKRClient, signals: list, order_list: list):
     positions_map = None
     for i, signal in enumerate(signals):
         signal["processed"] = True
-        if signal.get("action") == "SELL" and positions_map is None:
-            try:
-                account_info = client.get_account_info(timeout=10)
-                positions_map = {}
-                for pos in account_info.positions:
-                    positions_map[pos.symbol] = pos.quantity
-            except Exception:
-                pass
+        if positions_map is None and signal.get("action") in ("SELL", "BUY"):
+            qty_check = signal.get("quantity", 1)
+            if signal.get("action") == "SELL" or qty_check == -1:
+                try:
+                    account_info = client.get_account_info(timeout=10)
+                    positions_map = {}
+                    for pos in account_info.positions:
+                        positions_map[pos.symbol] = pos.quantity
+                except Exception:
+                    pass
 
-        # 预检查: SELL 且无持仓 → 跳过，不浪费提交资源
+        # 预检查: SELL 且无持仓 → 跳过
         if signal.get("action") == "SELL" and positions_map is not None:
             pos = positions_map.get(signal.get("symbol"), 0)
             if pos <= 0:
@@ -277,14 +279,37 @@ def process_signals(client: IBKRClient, signals: list, order_list: list):
                 }
                 order_list.append(order)
                 continue
-    
-        # 执行层: quantity=-1 表示"全部持仓"，替换为实际数量
+
+        # 预检查: BUY(ALL) 且无空头持仓 → 跳过
         qty = signal.get("quantity", 1)
-        if qty == -1 and signal.get("action") == "SELL" and positions_map is not None:
+        if signal.get("action") == "BUY" and qty == -1 and positions_map is not None:
+            pos = positions_map.get(signal.get("symbol"), 0)
+            if pos >= 0:
+                logger.warning(f"⚠️ 跳过买入信号 - 无空头持仓: {signal.get('symbol')}")
+                order = {
+                    "order_id": f"local_{i + 1:03d}",
+                    "signal": signal,
+                    "status": "FAILED",
+                    "perm_id": None,
+                    "processed": True,
+                    "filled_qty": 0.0,
+                    "avg_price": 0.0,
+                    "message": f"跳过买入信号 - 无空头持仓: {signal.get('symbol')}",
+                    "success": False,
+                    "generated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                }
+                order_list.append(order)
+                continue
+
+        # 执行层: quantity=-1 表示"全部持仓"，替换为实际数量
+        if qty == -1 and positions_map is not None:
             actual_qty = int(positions_map.get(signal.get("symbol"), 0))
-            if actual_qty > 0:
+            if signal.get("action") == "SELL" and actual_qty > 0:
                 logger.info(f"📊 SELL quantity=-1 → 替换为实际持仓 {actual_qty}: {signal.get('symbol')}")
                 signal["quantity"] = actual_qty
+            elif signal.get("action") == "BUY" and actual_qty < 0:
+                logger.info(f"📊 BUY quantity=-1 → 替换为空头持仓 {abs(actual_qty)}: {signal.get('symbol')}")
+                signal["quantity"] = abs(actual_qty)
 
         submit_result = build_and_submit_order(client, signal, positions_map)
 

@@ -1,0 +1,37 @@
+strategy_id: "SHORT_TAKE_PROFIT_{symbol}"
+name: "{symbol} 空头止盈"
+description: "{symbol} 明显超卖或急跌时买入平仓，锁定空头利润"
+enabled: true
+priority: 15
+weight: 1.0
+state: ACTIVE
+type: short_take_profit
+regime_weights:
+  BULL: 1.0
+  BEAR: 1.0
+  SIDEWAYS: 1.0
+signal_factors: ["market_data"]
+conditions:
+  operator: OR
+  rules:
+    - type: rsi
+      operator: "<"
+      threshold: 25
+    - type: change_pct
+      period: 5
+      operator: "<"
+      threshold: -6.0
+    - operator: AND
+      rules:
+        - type: price_vs_ma
+          period: 50
+          operator: "<"
+        - type: change_pct
+          period: 1
+          operator: "<"
+          threshold: -3.0
+action:
+  type: "MARKET_BUY"
+  quantity: "ALL"
+  ticker: "{symbol}"
+  tif: "DAY"

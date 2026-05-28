@@ -55,12 +55,14 @@ ibkr:
       VRT: 30
 
     templates:
-      dip_buy: [VRT, NVDA]
-      ma_buy: [DLR, VRT]
-      bounce_sell: [F, VST, CEG]
-      trend_entry: [COST, BCE, BAC, AAPL, NVDA, BA]
+      trend_entry: [COST, BCE, BAC, BA, GOOGL]                   # 趋势入场
+      dip_buy: [NVDA, VRT]                                       # 深跌买入
+      ma_buy: [AAPL, DLR]                                        # 均线弱势买入
+      long_take_profit: [DLR, META, MSFT, AMZN]                  # 多头止盈 — 替代原 bounce_sell
+      long_stop_loss: [NVDA, DLR, VRT, META, MSFT, AMZN, GOOGL]  # 多头止损
+      short_take_profit: [F, VST, CEG, TSLA]                     # 空头止盈 — 跌深时买入平仓
+      short_stop_loss: [F, VST, CEG, TSLA]                       # 空头止损 — 急涨时买入平仓
       trend_entry_strict: []
-      stop_loss: [NVDA, DLR, VRT]
       value_buy: []
       futures_trend: []
 

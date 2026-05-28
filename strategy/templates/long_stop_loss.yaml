@@ -5,7 +5,7 @@ enabled: true
 priority: 100
 weight: 1.0
 state: ACTIVE
-type: stop_loss
+type: long_stop_loss
 regime_weights:
   BULL: 1.0
   BEAR: 1.0

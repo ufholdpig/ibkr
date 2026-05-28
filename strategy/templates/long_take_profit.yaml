@@ -1,0 +1,37 @@
+strategy_id: "LONG_TAKE_PROFIT_{symbol}"
+name: "{symbol} 多头止盈"
+description: "{symbol} 明显超买或急涨时卖出多头，锁定利润"
+enabled: true
+priority: 15
+weight: 1.0
+state: ACTIVE
+type: long_take_profit
+regime_weights:
+  BULL: 1.0
+  BEAR: 1.0
+  SIDEWAYS: 1.0
+signal_factors: ["market_data"]
+conditions:
+  operator: OR
+  rules:
+    - type: rsi
+      operator: ">"
+      threshold: 78
+    - type: change_pct
+      period: 5
+      operator: ">"
+      threshold: 8.0
+    - operator: AND
+      rules:
+        - type: price_vs_ma
+          period: 50
+          operator: ">"
+        - type: change_pct
+          period: 1
+          operator: ">"
+          threshold: 3.0
+action:
+  type: "MARKET_SELL"
+  quantity: "ALL"
+  ticker: "{symbol}"
+  tif: "DAY"
