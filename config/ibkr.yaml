@@ -55,7 +55,9 @@ ibkr:
       VRT: 30
 
     templates:
-      trend_entry: [COST, BCE, BAC, BA, GOOGL]                   # 趋势入场
+      trend_entry: [COST, BCE, BAC, BA, GOOGL, CRDO]             # 趋势入场
+      trend_entry.1: [COST, BCE, BAC, BA, GOOGL, CRDO]           # 趋势入场v1(宽松)
+      trend_entry.2: [MTB, TFC, USB]           # 趋势入场v2(优化)
       dip_buy: [NVDA, VRT]                                       # 深跌买入
       ma_buy: [AAPL, DLR]                                        # 均线弱势买入
       long_take_profit: [DLR, META, MSFT, AMZN]                  # 多头止盈 — 替代原 bounce_sell

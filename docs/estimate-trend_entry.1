@@ -1,0 +1,231 @@
+CRDO今天往上突破，后面如果继续离开当前区间确实是突破买入点。
+
+- 这个策略是要找出长期是上行趋势的股票，但是中期要有相当大或者相当长时间的充分休整，到50天线附近才会触发再次入场。目前大盘处于高位，强势股已经涨了很多，继续追就很不安全，这个系统肯定是不会触发的。找不出太多股票是正常的，现在大背景就不是进场的时候。前面给的参数相对来说比较严格，参数可以先放松一些，慢慢再收紧。如果大盘出现5-10%回撤，估计到时候会扫除一大堆。
+
+我这边在做回测，根据结果优化了一些参数。后面还需要继续跑更多数据。你可以参考一下下面参数。
+
+//@version=6
+strategy("BeaconStrongTrend Strategy", overlay=true, initial_capital=10000, default_qty_value=100, default_qty_type=strategy.percent_of_equity, process_orders_on_close=true, max_labels_count=100, max_boxes_count=50, max_lines_count=100)
+
+// === INPUTS ===
+
+// --- Moving Averages ---
+sma50Len    = input.int(50,   "SMA Length",      group="Moving Averages")
+sma200Len   = input.int(200,  "SMA Length (Long)", group="Moving Averages")
+
+// --- Slope Controls ---
+maxSMA50Slope   = input.float(20.0, "Max SMA50 Slope (%)",   group="Slope Controls", step=0.5)
+minSMA200Slope  = input.float(0.5,  "Min SMA200 Slope (%)",  group="Slope Controls", step=0.1)
+
+// --- Spread ---
+maxSpreadPct = input.float(30.0, "Max Spread (%)", group="Spread", step=1.0)
+
+// --- Consolidation (with Fibonacci bar count) ---
+consZonePct    = input.float(5.0,   "Consolidation Zone (%)",         group="Consolidation", step=0.1)
+fibLengthsStr  = input.string("1,2,3,5,8,13,21,34,55", "Fibonacci Bar Counts", group="Consolidation")
+fibTolerance   = input.int(2,       "Fib Tolerance (±bars)",          group="Consolidation", minval=0, maxval=5)
+
+// --- Volume ---
+volMultiplier = input.float(0.6, "Volume Multiplier", group="Volume", step=0.1)
+volAvgLen     = input.int(20,    "Volume Avg Length", group="Volume")
+
+// --- RSI ---
+rsiLen          = input.int(14,  "RSI Length",      group="RSI")
+pivotLookback   = input.int(5,   "Pivot Lookback",  group="RSI", minval=2, maxval=20)
+
+// --- Risk Management ---
+atrLength      = input.int(14,   "ATR Length",             group="Risk Management")
+atrMultiplier  = input.float(2.0,"ATR Multiplier (SL)",    group="Risk Management", step=0.1)
+rrRatio        = input.float(2.5,"Reward:Risk Ratio",      group="Risk Management", step=0.1)
+
+// --- Display ---
+lookbackBars = input.int(250, "Lookback Bars", group="Display", minval=1)
+
+
+// === INDICATOR CALCULATIONS ===
+sma50   = ta.sma(close, sma50Len)
+sma200  = ta.sma(close, sma200Len)
+avgVol  = ta.sma(volume, volAvgLen)
+rsiVal  = ta.rsi(close, rsiLen)
+atrVal  = ta.atr(atrLength)
+
+
+// === CONDITION 1: Near SMA50 (Consolidation Zone) ===
+nearSMA50 = math.abs(close - sma50) / sma50 * 100 <= consZonePct
+
+
+// === CONDITION 2: Volume Surge ===
+volumeOK = volume > volMultiplier * avgVol
+
+
+// === CONDITION 3: RSI Reclaim + Bullish Divergence ===
+rsiReclaim50 = ta.crossover(rsiVal, 50)
+rsiReclaim30 = ta.crossover(rsiVal, 30)
+rsiReclaimOK = rsiReclaim50 or rsiReclaim30
+
+// Track pivot lows for RSI bullish divergence
+var float prevPivotLowPrice = na
+var float prevPivotLowRSI   = na
+var float currPivotLowPrice = na
+var float currPivotLowRSI   = na
+pivotLowVal = ta.pivotlow(low, pivotLookback, pivotLookback)
+if not na(pivotLowVal)
+    prevPivotLowPrice := currPivotLowPrice
+    prevPivotLowRSI   := currPivotLowRSI
+    currPivotLowPrice := pivotLowVal
+    currPivotLowRSI   := rsiVal[pivotLookback]
+
+bullDiv = not na(prevPivotLowPrice) and (currPivotLowPrice < prevPivotLowPrice) and (currPivotLowRSI > prevPivotLowRSI)
+rsiOK = rsiReclaimOK
+
+
+// === CONDITION 4: SMA50 Slope (0% to maxSMA50Slope over 5 bars) ===
+sma50SlopeVal  = (sma50 - sma50[5]) / sma50[5] * 100
+sma50SlopeOK   = sma50SlopeVal >= 0 and sma50SlopeVal <= maxSMA50Slope
+
+
+// === CONDITION 5: SMA200 Slope (>= minSMA200Slope over 10 bars) ===
+sma200SlopeVal = (sma200 - sma200[10]) / sma200[10] * 100
+sma200SlopeOK  = sma200SlopeVal >= minSMA200Slope
+
+
+// === CONDITION 6: Spread (0% to maxSpreadPct) ===
+spreadVal = (sma50 - sma200) / sma200 * 100
+spreadOK  = spreadVal >= 0 and spreadVal <= maxSpreadPct
+
+
+// === CONDITION 7: Fibonacci Consolidation ===
+// Count consecutive bars where price stays inside the consolidation zone
+var int consecutiveBars = 0
+consecutiveBars := nearSMA50 ? consecutiveBars + 1 : 0
+
+// === TRACK CONSOLIDATION ZONE (high/low/start for box drawing) ===
+var float consHigh = na
+var float consLow = na
+var int consStartBar = na
+if nearSMA50
+    consHigh := na(consHigh) ? high : math.max(consHigh, high)
+    consLow  := na(consLow)  ? low  : math.min(consLow,  low)
+    consStartBar := na(consStartBar) ? bar_index : consStartBar
+else
+    consHigh := na
+    consLow  := na
+    consStartBar := na
+
+// === TRACK SWING POINTS FOR PULLBACK TREND LINE + CHANNEL ===
+var float swingHighPrice = na
+var int   swingHighBar   = na
+var float swingLow1Price = na   // most recent pivot low
+var int   swingLow1Bar   = na
+var float swingLow2Price = na   // second most recent pivot low
+var int   swingLow2Bar   = na
+
+phVal = ta.pivothigh(high, 10, 10)
+if not na(phVal)
+    swingHighPrice := phVal
+    swingHighBar   := bar_index[10]
+
+plVal = ta.pivotlow(low, 10, 10)
+if not na(plVal)
+    swingLow2Price := swingLow1Price
+    swingLow2Bar   := swingLow1Bar
+    swingLow1Price := plVal
+    swingLow1Bar   := bar_index[10]
+
+// Parse the Fibonacci comma-separated list once (on first bar)
+var fibNums = array.new<int>()
+if barstate.isfirst and array.size(fibNums) == 0
+    fibParts = str.split(fibLengthsStr, ",")
+    for fibPart in fibParts
+        fibVal = str.tonumber(str.trim(fibPart))
+        if not na(fibVal)
+            array.push(fibNums, int(fibVal))
+
+// Check if consecutiveBars (± tolerance) matches any Fibonacci number
+isFibConsolidation = false
+for i = 0 to array.size(fibNums) - 1
+    if math.abs(consecutiveBars - array.get(fibNums, i)) <= fibTolerance
+        isFibConsolidation := true
+        break
+
+
+// === COMBINED BUY SIGNAL (all 7 conditions ANDed) ===
+buySignal = nearSMA50 and volumeOK and rsiOK and sma50SlopeOK and sma200SlopeOK and spreadOK and isFibConsolidation
+
+
+// === LOOKBACK RANGE (only the last N bars get arrows / labels) ===
+inLookback = bar_index >= last_bar_index - lookbackBars + 1
+
+
+// === DRAW CONSOLIDATION BOX OR PULLBACK LINES ON buySignal ===
+if buySignal and inLookback
+    if consecutiveBars >= 5  // genuine consolidation
+        // Draw consolidation zone rectangle
+        box.new(consStartBar, consHigh, bar_index, consLow,
+            border_color=color.new(color.blue, 20),
+            bgcolor=color.new(color.blue, 85),
+            border_width=1)
+    else  // pullback — draw trend line + channel
+        // Trend line: connect two most recent swing lows
+        if not na(swingLow2Price) and not na(swingLow1Price) and not na(swingHighPrice)
+            line.new(swingLow2Bar, swingLow2Price, swingLow1Bar, swingLow1Price,
+                color=color.new(color.green, 0),
+                width=2,
+                style=line.style_solid,
+                extend=extend.right)
+            // Use highest of swingLow1-high region and swingHighPrice for the channel line
+            float midHigh = math.max(swingHighPrice, swingLow1Price)
+            // Channel line: parallel to trend line, passing through swing high
+            line.new(swingLow2Bar, swingLow2Price + (midHigh - swingLow1Price),
+                     swingLow1Bar, swingLow1Price + (midHigh - swingLow1Price),
+                color=color.new(color.green, 30),
+                width=1,
+                style=line.style_dashed,
+                extend=extend.right)
+
+
+// === STRATEGY ENTRY AND EXIT ===
+var float savedStop     = na
+var float savedTarget   = na
+bool slHit = false
+bool tpHit = false
+
+// 1) Detect SL/TP hits (for labels) by checking price against saved levels
+if not na(savedStop)
+    if low <= savedStop
+        slHit := true
+        savedStop := na
+        savedTarget := na
+    else if high >= savedTarget
+        tpHit := true
+        savedStop := na
+        savedTarget := na
+
+// 2) New buy signal — enter long via strategy, save SL/TP prices
+if buySignal
+    strategy.entry("Long", strategy.long)
+    savedStop   := close - atrMultiplier * atrVal
+    savedTarget := close + rrRatio * atrMultiplier * atrVal
+
+// 3) Place exit order once position is open (fires on bar after entry)
+if strategy.position_size > 0 and not na(savedStop)
+    strategy.exit("Exit", "Long", stop=savedStop, limit=savedTarget)
+
+
+// === PLOTTING ===
+
+// --- Buy arrow (green triangle below bar) ---
+plotshape(buySignal and inLookback, "Buy", shape.triangleup, location.belowbar,
+     color.new(color.green, 0), size=size.small)
+
+// --- SL label (red, at bar low) ---
+if slHit and inLookback
+    label.new(bar_index, low, "SL", yloc=yloc.price,
+         color=color.red, textcolor=color.white,
+         style=label.style_label_down, size=size.small)
+
+// --- TP label (green, at bar high) ---
+if tpHit and inLookback
+    label.new(bar_index, high, "TP", yloc=yloc.price,
+         color=color.green, textcolor=color.white,
+         style=label.style_label_up, size=size.small)

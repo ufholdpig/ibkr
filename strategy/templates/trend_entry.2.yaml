@@ -1,0 +1,54 @@
+strategy_id: "TREND_ENTRY_2_{symbol}"
+name: "{symbol} 趋势入场v2"
+description: "{symbol} 老大优化版：斐波那契±5，RSI>45，5%SL/20%TP"
+enabled: true
+priority: 20
+weight: 1.2
+state: ACTIVE
+type: trend_entry
+regime_weights:
+  BULL: 1.5
+  BEAR: 0.0
+  SIDEWAYS: 0.5
+signal_factors: ["market_data"]
+conditions:
+  operator: AND
+  rules:
+    - type: ma_stack
+      operator: ">"
+    - type: sma_slope
+      period: 50
+      threshold: 0
+      multiplier: 60
+      operator: ">"
+    - type: sma_slope
+      period: 200
+      threshold: 0
+      multiplier: 90
+      operator: ">"
+    - type: ma_spread
+      operator: "<"
+      threshold: 0.30
+    - type: volume_spike
+      multiplier: 0.6
+    - type: rsi
+      operator: ">"
+      threshold: 45
+    - type: fib_time
+      mode: "consolidation"
+      threshold: 5
+    - operator: OR
+      rules:
+        - type: consolidation_breakout
+        - type: retrace_breakout
+action:
+  type: "LIMIT_BUY"
+  quantity: 10
+  ticker: "{symbol}"
+  price_offset: -0.003
+  tif: "DAY"
+  risk:
+    stop_loss_type: "fixed_pct"
+    stop_loss_pct: 0.05
+    take_profit_pct: 0.20
+    trailing_stop_pct: 0.07

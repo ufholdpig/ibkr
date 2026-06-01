@@ -1,0 +1,176 @@
+这几天回测数据，优化各个参数。下面是初步结果。这周Token额度用光了，周末先手工检查一下然后下周继续。
+
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © anthonythx
+
+//@version=6
+strategy("BeaconStrongTrend Strategy", overlay=true, initial_capital=10000, default_qty_value=100, default_qty_type=strategy.percent_of_equity, process_orders_on_close=true, max_labels_count=100, max_boxes_count=50, max_lines_count=100)
+
+// === INPUTS ===
+
+// --- Moving Averages ---
+sma50Len    = input.int(50,   "SMA Length",      group="Moving Averages")
+sma200Len   = input.int(200,  "SMA Length (Long)", group="Moving Averages")
+
+// --- Slope Controls ---
+maxSMA50Slope   = input.float(20.0, "Max SMA50 Slope (%)",   group="Slope Controls", step=0.5)
+minSMA200Slope  = input.float(0.1,  "Min SMA200 Slope (%)",  group="Slope Controls", step=0.1)
+
+// --- Spread ---
+maxSpreadPct = input.float(30.0, "Max Spread (%)", group="Spread", step=1.0)
+
+// --- Consolidation (with Fibonacci bar count) ---
+consZonePct    = input.float(5.0,   "Consolidation Zone (%)",         group="Consolidation", step=0.1)
+fibLengthsStr  = input.string("1,2,3,5,8,13,21,34,55", "Fibonacci Bar Counts", group="Consolidation")
+fibTolerance   = input.int(5,       "Fib Tolerance (±bars)",          group="Consolidation", minval=0, maxval=10)
+fibWindow      = input.int(34,      "Fib Rolling Window (bars)",      group="Consolidation", minval=8, maxval=55, tooltip="Rolling window for Fib bar counting, accumulates bars across sawtooth patterns")
+
+// --- Volume ---
+volMultiplier = input.float(0.6, "Volume Multiplier", group="Volume", step=0.1)
+volAvgLen     = input.int(20,    "Volume Avg Length", group="Volume")
+
+// --- RSI ---
+rsiLen          = input.int(14,  "RSI Length",      group="RSI")
+pivotLookback   = input.int(5,   "Pivot Lookback",  group="RSI", minval=2, maxval=20)
+
+// --- Risk Management ---
+slPct   = input.float(5.0, "Stop Loss (%)",     group="Risk Management", step=0.5, minval=1)
+tp1Pct   = input.float(20.0, "Take Profit 1 (%)", group="Risk Management", step=0.5, minval=1)
+tp2Pct   = input.float(50.0, "Take Profit 2 (%)", group="Risk Management", step=1.0, minval=1)
+tp1ProximityPct = input.float(1.0, "TP1 Proximity (%)", group="Risk Management", step=0.1, minval=0, maxval=5)
+betaCoef        = input.float(1.0, "Beta Coefficient", group="Risk Management", minval=0.5, maxval=2.5, step=0.05, tooltip="Scale SL/TP/consZone by stock beta. 1.0 = no scaling. TSLA ~2.0, BNS ~0.8.")
+// Beta cap: high-beta stocks (>1.5) capped at 1.2, otherwise use actual beta
+effectiveBeta = betaCoef > 1.5 ? 1.2 : betaCoef
+useSMA20Exit = input.bool(false, "SMA20 Exit", group="Risk Management", tooltip="Close position when price closes below SMA20")
+
+// --- Display ---
+lookbackBars = input.int(250, "Lookback Bars", group="Display", minval=1)
+
+
+// === INDICATOR CALCULATIONS ===
+
+sma50   = ta.sma(close, sma50Len)
+sma200  = ta.sma(close, sma200Len)
+avgVol  = ta.sma(volume, volAvgLen)
+rsiVal  = ta.rsi(close, rsiLen)
+
+
+// === EFFECTIVE VALUES (Beta-Scaled) ===
+effective_consZonePct = consZonePct * effectiveBeta
+effective_slPct       = slPct
+effective_tp1Pct      = tp1Pct * effectiveBeta
+effective_tp2Pct      = tp2Pct * effectiveBeta
+
+// === CONDITION 1: Near SMA50 (Consolidation Zone) ===
+nearSMA50 = math.abs(close - sma50) / sma50 * 100 <= effective_consZonePct
+
+
+// === CONDITION 2: Volume Surge ===
+volumeOK = volume > volMultiplier * avgVol
+
+
+// === CONDITION 3: RSI Reclaim + Bullish Divergence ===
+rsiReclaim50 = ta.crossover(rsiVal, 50)
+rsiReclaim30 = ta.crossover(rsiVal, 30)
+rsiReclaimOK = rsiReclaim50 or rsiReclaim30
+
+// Track pivot lows for RSI bullish divergence
+var float prevPivotLowPrice = na
+var float prevPivotLowRSI   = na
+var float currPivotLowPrice = na
+var float currPivotLowRSI   = na
+pivotLowVal = ta.pivotlow(low, pivotLookback, pivotLookback)
+if not na(pivotLowVal)
+    prevPivotLowPrice := currPivotLowPrice
+    prevPivotLowRSI   := currPivotLowRSI
+    currPivotLowPrice := pivotLowVal
+    currPivotLowRSI   := rsiVal[pivotLookback]
+
+bullDiv = not na(prevPivotLowPrice) and (currPivotLowPrice < prevPivotLowPrice) and (currPivotLowRSI > prevPivotLowRSI)
+// RSI OK: crossover reclaim from 50/30, OR in strong zone (>45) and not weakening
+rsiStrongZone = rsiVal > 45 and (rsiVal >= rsiVal[1] or rsiVal > 50)
+rsiOK = rsiReclaimOK or rsiStrongZone
+
+
+// === CONDITION 4: SMA50 Slope (0% to maxSMA50Slope over 5 bars) ===
+sma50SlopeVal  = (sma50 - sma50[5]) / sma50[5] * 100
+sma50SlopeOK   = sma50SlopeVal >= 0 and sma50SlopeVal <= maxSMA50Slope
+
+
+// === CONDITION 5: SMA200 Slope (>= minSMA200Slope over 10 bars) ===
+sma200SlopeVal = (sma200 - sma200[10]) / sma200[10] * 100
+sma200SlopeOK  = sma200SlopeVal >= minSMA200Slope
+
+
+// === CONDITION 6: Spread (0% to maxSpreadPct) ===
+spreadVal = (sma50 - sma200) / sma200 * 100
+spreadOK  = spreadVal >= 0 and spreadVal <= maxSpreadPct
+
+
+// === CONDITION 7: Fibonacci Consolidation ===
+// Count bars in consolidation zone within rolling window (survives sawtooth patterns)
+barsInZone = math.sum(nearSMA50 ? 1 : 0, fibWindow)
+
+// Parse Fibonacci lengths from input string
+fibLengthsArr = str.split(fibLengthsStr, ",")
+fibLengthsOK  = false
+for i = 0 to array.size(fibLengthsArr) - 1
+    fibVal = str.tonumber(array.get(fibLengthsArr, i))
+    if not na(fibVal)
+        if math.abs(barsInZone - fibVal) <= fibTolerance
+            fibLengthsOK := true
+
+// Current bar must also be in the zone
+fibLengthsOK := fibLengthsOK and nearSMA50
+
+// === COMBINED ENTRY CONDITION ===
+longEntry = nearSMA50 and volumeOK and rsiOK and sma50SlopeOK and sma200SlopeOK and spreadOK and fibLengthsOK and strategy.position_size == 0
+
+
+// === ENTRY ===
+if longEntry
+    strategy.entry("Long", strategy.long)
+
+
+// === EXITS ===
+var bool tp1Taken = false
+var float highestClose = 0.0
+
+// Reset TP1 flag and highest close when fully out of position
+if strategy.position_size == 0
+    tp1Taken := false
+    highestClose := 0.0
+
+if strategy.position_size > 0
+    entryPrice = strategy.position_avg_price
+    // Use beta-scaled values
+    eff_tp1Pct = effective_tp1Pct
+    eff_tp2Pct = effective_tp2Pct
+    stopPrice  = entryPrice * (1 - effective_slPct / 100)
+    tp1Price   = entryPrice * (1 + eff_tp1Pct / 100)
+    tp2Price   = entryPrice * (1 + eff_tp2Pct / 100)
+    
+    if not tp1Taken
+        
+        
+        strategy.exit("SL", from_entry="Long", stop=stopPrice)
+        
+        // Track highest close since entry
+        highestClose := math.max(highestClose, close)
+        // Full hit: price reached TP1
+        if high >= tp1Price
+            strategy.close("Long", qty_percent=50, comment="TP1 +" + str.tostring(math.round(eff_tp1Pct, 1)) + "%")
+            tp1Taken := true
+        // Proximity: highest close came within tp1ProximityPct of TP1 target
+        else if highestClose >= entryPrice * (1 + (eff_tp1Pct - tp1ProximityPct) / 100)
+            closePct = (close - entryPrice) / entryPrice * 100
+            strategy.close("Long", qty_percent=50, comment="TP1 Prox +" + str.tostring(math.round(closePct, 1)) + "%")
+            tp1Taken := true
+    else
+        // After TP1: breakeven stop, TP2
+        
+        
+        strategy.exit("SL", from_entry="Long", stop=entryPrice)
+        
+        if high >= tp2Price
+            strategy.close("Long", comment="TP2 +" + str.tostring(math.round(eff_tp2Pct, 1)) + "%")
