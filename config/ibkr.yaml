@@ -16,27 +16,6 @@ ibkr:
     retry_delay: 2
     account_id: "DU4011059"  # 子账号 ID（Paper=DU4011059，实盘=实盘账号）
   
-  # 报告目录配置
-  reports:
-    # 自动根据账户类型选择目录
-    auto_select: true
-    
-    # 默认目录（auto_select=false 时使用）
-    default_base: "reports"
-    
-    # 账户类型特定目录
-    real:
-      base: "reports/real"
-      pre_market: "reports/real/pre_market"
-      intra_day: "reports/real/intra_day"
-      post_market: "reports/real/post_market"
-    
-    paper:
-      base: "reports/paper"
-      pre_market: "reports/paper/pre_market"
-      intra_day: "reports/paper/intra_day"
-      post_market: "reports/paper/post_market"
-
   # Watch 守护进程配置
   # templates: 以模版为中心，每个模版绑定适用的标的列表
   watch:

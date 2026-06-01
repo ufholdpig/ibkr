@@ -25,23 +25,6 @@ class GatewayConfig:
 
 
 @dataclass
-class ReportConfig:
-    """报告目录配置"""
-    auto_select: bool = True
-    default_base: str = "reports"
-    real: dict = field(default_factory=lambda: {
-        "base": "reports/real",
-        "pre_market": "reports/real/pre_market",
-        "intra_day": "reports/real/intra_day",
-        "post_market": "reports/real/post_market"
-    })
-    paper: dict = field(default_factory=lambda: {
-        "base": "reports/paper",
-        "pre_market": "reports/paper/pre_market",
-        "intra_day": "reports/paper/intra_day",
-        "post_market": "reports/paper/post_market"
-    })
-@dataclass
 class WatchConfig:
     """Watch 守护进程配置 — 以模版为中心
 
@@ -163,7 +146,6 @@ class IBKRConfig:
     """IBKR 完整配置"""
     market_data_source: str = "auto"  # "auto", "ibkr", "yfinance"
     gateway: GatewayConfig = field(default_factory=GatewayConfig)
-    reports: ReportConfig = field(default_factory=ReportConfig)
     watch: WatchConfig = field(default_factory=WatchConfig)
     risk_engine: RiskConfig = field(default_factory=RiskConfig)
 
@@ -206,26 +188,6 @@ class IBKRConfig:
             retry_delay=int(os.getenv("IBKR_RETRY_DELAY", gateway_data.get("retry_delay", 2))),
             account_id=account_id,
         )
-        
-        # 加载报告配置
-        reports_data = ibkr_data.get("reports", {})
-        reports = ReportConfig(
-            auto_select=reports_data.get("auto_select", True),
-            default_base=reports_data.get("default_base", "reports"),
-            real=reports_data.get("real", {
-                "base": "reports/real",
-                "pre_market": "reports/real/pre_market",
-                "intra_day": "reports/real/intra_day",
-                "post_market": "reports/real/post_market"
-            }),
-            paper=reports_data.get("paper", {
-                "base": "reports/paper",
-                "pre_market": "reports/paper/pre_market",
-                "intra_day": "reports/paper/intra_day",
-                "post_market": "reports/paper/post_market"
-            })
-        )
-        
         # 加载 watch 守护进程配置
         watch_data = ibkr_data.get("watch", {})
         templates_raw = watch_data.get("templates", {})
@@ -253,7 +215,7 @@ class IBKRConfig:
             forbid_day_trading=risk_data.get("forbid_day_trading", True),
         )
         
-        return cls(market_data_source=market_data_source, gateway=gateway, reports=reports, watch=watch, risk_engine=risk_engine)
+        return cls(market_data_source=market_data_source, gateway=gateway, watch=watch, risk_engine=risk_engine)
 
 
 # =============================================================================
