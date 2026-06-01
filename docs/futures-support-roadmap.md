@@ -677,8 +677,7 @@ python3 src/trading/watch_daemon.py MES
 设置 `approval_required: true` 阻止自动执行：
 
 ```yaml
-  risk_engine:
-    approval_required: true    # ← 信号入审批队列，不自动提交
+  approval_required: true    # ← 信号入审批队列，不自动提交
 ```
 
 然后运行 daemon，信号会出现在审批队列但不会提交到 IBKR。

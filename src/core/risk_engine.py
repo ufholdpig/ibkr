@@ -143,17 +143,12 @@ class RiskEngine:
                        net_liquidation: float = 0.0) -> List[RiskCheckResult]:
         results = []
 
-        # 期货跳过 TFSA 特有规则（日内冲销、卖空、年度频率）
-        is_fut = self._is_futures_symbol(symbol)
-
-        if not is_fut and self.config.forbid_short_sell:
-            results.append(self._check_short_sell(action))
-
-        if not is_fut and self.config.max_trades_per_year > 0:
-            results.append(self._check_yearly_trades())
-
-        if not is_fut and self.config.forbid_day_trading:
-            results.append(self._check_day_trading(symbol, action))
+        if self.config.tfsa_limitation:
+            is_fut = self._is_futures_symbol(symbol)
+            if not is_fut:
+                results.append(self._check_short_sell(action))
+                results.append(self._check_yearly_trades())
+                results.append(self._check_day_trading(symbol, action))
 
         pos = positions_map or self._current_positions
         if self.config.position_limit_pct > 0 and action == "BUY" and price > 0:
@@ -256,7 +251,7 @@ class RiskEngine:
         if not self._trades_loaded:
             self.load_trade_history()
         count = len(self._yearly_trades)
-        limit = self.config.max_trades_per_year
+        limit = 80  # TFSA: CRA 商业收入门槛
         if count >= limit:
             return RiskCheckResult(
                 decision=RiskDecision.REJECTED,

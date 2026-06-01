@@ -53,15 +53,16 @@ class WatchConfig:
 
 @dataclass
 class RiskConfig:
-    """TFSA 风控引擎配置"""
+    """风控引擎配置
+
+    tfsa_limitation=true  硬编码 TFSA 规则（年交易 ≤80, 禁止做空, 禁止日内交易）
+    tfsa_limitation=false 保证金/普通账户，不施加 TFSA 限制
+    """
     enabled: bool = True
     fail_closed: bool = False       # true: 风控不可用时拒绝交易（实盘必须 true）
-    approval_required: bool = False  # true: 信号写入审批队列，用户 approve 后才提交 IBKR
     position_limit_pct: float = 20.0
     max_order_value_pct: float = 50.0  # 单笔订单价值 ≤ 账户净值的百分比
-    max_trades_per_year: int = 80
-    forbid_short_sell: bool = True
-    forbid_day_trading: bool = True
+    tfsa_limitation: bool = True
 
 
 @dataclass
@@ -145,6 +146,7 @@ def get_instrument_registry() -> InstrumentRegistry:
 class IBKRConfig:
     """IBKR 完整配置"""
     market_data_source: str = "auto"  # "auto", "ibkr", "yfinance"
+    approval_required: bool = False   # true: 信号写入审批队列，用户 approve 后才提交 IBKR
     gateway: GatewayConfig = field(default_factory=GatewayConfig)
     watch: WatchConfig = field(default_factory=WatchConfig)
     risk_engine: RiskConfig = field(default_factory=RiskConfig)
@@ -168,6 +170,7 @@ class IBKRConfig:
         market_data_source = ibkr_data.get("market_data_source", "auto")
         if market_data_source not in ("auto", "ibkr", "yfinance"):
             raise ValueError(f"market_data_source 必须是 'auto', 'ibkr' 或 'yfinance'，当前值: {market_data_source}")
+        approval_required = ibkr_data.get("approval_required", False)
         gateway_data = ibkr_data.get("gateway", {})
         
         # 处理client_id随机值
@@ -207,15 +210,13 @@ class IBKRConfig:
         risk_engine = RiskConfig(
             enabled=risk_data.get("enabled", True),
             fail_closed=risk_data.get("fail_closed", False),
-            approval_required=risk_data.get("approval_required", False),
             position_limit_pct=risk_data.get("position_limit_pct", 20.0),
             max_order_value_pct=risk_data.get("max_order_value_pct", 50.0),
-            max_trades_per_year=risk_data.get("max_trades_per_year", 80),
-            forbid_short_sell=risk_data.get("forbid_short_sell", True),
-            forbid_day_trading=risk_data.get("forbid_day_trading", True),
+            tfsa_limitation=risk_data.get("tfsa_limitation", True),
         )
         
-        return cls(market_data_source=market_data_source, gateway=gateway, watch=watch, risk_engine=risk_engine)
+        return cls(market_data_source=market_data_source, approval_required=approval_required,
+                    gateway=gateway, watch=watch, risk_engine=risk_engine)
 
 
 # =============================================================================

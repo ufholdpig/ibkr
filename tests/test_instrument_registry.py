@@ -233,9 +233,7 @@ class TestRiskEngineNotional:
         from src.core.risk_engine import RiskEngine, RiskDecision
         from config.config import RiskConfig
         config = RiskConfig(
-            forbid_short_sell=True,
-            forbid_day_trading=True,
-            max_trades_per_year=80,
+            tfsa_limitation=True,
             position_limit_pct=0,
             max_order_value_pct=0,
         )
@@ -253,9 +251,7 @@ class TestRiskEngineNotional:
         from src.core.risk_engine import RiskEngine
         from config.config import RiskConfig
         config = RiskConfig(
-            forbid_short_sell=True,
-            forbid_day_trading=True,
-            max_trades_per_year=80,
+            tfsa_limitation=True,
             position_limit_pct=0,
             max_order_value_pct=0,
         )

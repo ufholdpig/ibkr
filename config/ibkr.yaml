@@ -6,6 +6,7 @@
 ibkr:
   # 市场数据源: "auto" (IBKR优先, 失败自动回退yfinance), "ibkr", "yfinance"
   market_data_source: "yfinance"
+  approval_required: true  # false: 信号直接提交 IBKR，无需手动审批
   gateway:
     #host: "127.0.0.1"
     host: "192.168.2.18"
@@ -47,13 +48,11 @@ ibkr:
       value_buy: []
       futures_trend: []
 
-  # TFSA 风控引擎配置
+  # 风控引擎配置
+  # tfsa_limitation=true 时硬编码 TFSA 规则（年交易 ≤80, 禁止做空, 禁止日内交易）
   # Paper 测试时 fail_closed=false，实盘部署前设为 true
   risk_engine:
     enabled: true
-    fail_closed: false       # true: 风控不可用时拒绝交易（实盘必须 true）
-    approval_required: false  # false: 信号直接提交 IBKR，无需手动审批
+    tfsa_limitation: true     # false=保证金/普通账户
+    fail_closed: false        # true: 风控不可用时拒绝交易（实盘必须 true）
     position_limit_pct: 20.0
-    max_trades_per_year: 80
-    forbid_short_sell: true
-    forbid_day_trading: true

@@ -84,6 +84,7 @@ def send_signal(sig: int) -> bool:
 class WatchDaemon:
     def __init__(self, watch_config: WatchConfig | None = None,
                  risk_config: RiskConfig | None = None,
+                 approval_required: bool | None = None,
                  symbol_filter: str | None = None):
         self.logger = get_logger("WatchDaemon")
 
@@ -92,6 +93,9 @@ class WatchDaemon:
             watch_config = full_config.watch
             if risk_config is None:
                 risk_config = full_config.risk_engine
+            if approval_required is None:
+                approval_required = full_config.approval_required
+        self.approval_required = approval_required or False
 
         self.watch_config = watch_config
         all_symbols = watch_config.symbol_list
@@ -134,6 +138,7 @@ class WatchDaemon:
         self._notification_lock = threading.Lock()
 
         self.pending_signal_store = PendingSignalStore()
+        self._was_trading: bool | None = None
 
         self._ibkr_client = None
         self._connect_ibkr_client()
@@ -427,12 +432,7 @@ class WatchDaemon:
 
         # approval 检查: 信号入待审批队列，不执行
         is_paper = getattr(self.risk_engine, '_is_paper', True) if self.risk_engine else True
-        approval_required = (
-            self.risk_engine.config.approval_required
-            if self.risk_engine and hasattr(self.risk_engine.config, 'approval_required')
-            else False
-        )
-        if approval_required:
+        if self.approval_required:
             from src.core.order_approval import OrderApprovalQueue
             queue = OrderApprovalQueue()
             for sd in signal_dicts:
@@ -579,9 +579,16 @@ class WatchDaemon:
                     self.active = False
                     self._woken_manually = False
                     self.logger.info("收到休眠信号 (SIGUSR2)，进入 SLEEP 模式")
-        
+
+                is_trading = self._is_trading_now()
+                if self._was_trading is not None and is_trading != self._was_trading:
+                    if self._woken_manually:
+                        self._woken_manually = False
+                        self.logger.info("手动唤醒标记已清除，到达下一检查点")
+                self._was_trading = is_trading
+
                 if not self.active:
-                    if self._is_trading_now():
+                    if is_trading:
                         self.active = True
                         self._woken_manually = False
                         self.logger.info("交易时段已到，自动进入 ACTIVE 模式")
@@ -591,8 +598,7 @@ class WatchDaemon:
                             time.sleep(min(1, remaining))
                             remaining -= 1
                         continue
-                elif not self._is_trading_now():
-                    self._woken_manually = False
+                elif not is_trading and not self._woken_manually:
                     self.active = False
                     self.logger.info("交易时段已结束，自动进入 SLEEP 模式")
                     remaining = 60
@@ -684,7 +690,9 @@ def run_watch(symbol: str | None = None):
     from src.core.paths import set_data_mode, resolve_data_mode
     cfg = load_config()
     set_data_mode(resolve_data_mode(cfg.gateway.account_id or ""))
-    daemon = WatchDaemon(cfg.watch, cfg.risk_engine, symbol_filter=symbol)
+    daemon = WatchDaemon(cfg.watch, cfg.risk_engine,
+                         approval_required=cfg.approval_required,
+                         symbol_filter=symbol)
     daemon.run()
 
 

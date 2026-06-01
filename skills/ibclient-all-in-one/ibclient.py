@@ -446,7 +446,7 @@ def submit_manual_order(symbol: str, quantity: int, action: str) -> int:
     }
 
     config = load_config()
-    approval_required = config.risk_engine.approval_required
+    approval_required = config.approval_required
 
     if approval_required:
         queue = OrderApprovalQueue()
