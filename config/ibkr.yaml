@@ -6,7 +6,7 @@
 ibkr:
   # 市场数据源: "auto" (IBKR优先, 失败自动回退yfinance), "ibkr", "yfinance"
   market_data_source: "yfinance"
-  approval_required: true  # false: 信号直接提交 IBKR，无需手动审批
+  approval_required: false  # false: 信号直接提交 IBKR，无需手动审批
   gateway:
     #host: "127.0.0.1"
     host: "192.168.2.18"
