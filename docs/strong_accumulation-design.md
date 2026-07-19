@@ -1,7 +1,8 @@
 # Strong Accumulation 策略设计方案
 
 **创建时间**: 2026-07-18  
-**状态**: 设计阶段，待实现  
+**更新时间**: 2026-07-18（整合实现阶段）  
+**状态**: Phase 1 已完成，ibclient 命令待实现  
 **目标**: 2-6个月周期挖掘强势股，在启动前进场
 
 ---
@@ -196,66 +197,268 @@
        → 移出标的池，重新筛选替换
 ```
 
-### 3.4 系统实现架构
+---
+
+## 四、执行时机与评估范围
+
+### 4.1 核心设计原则
+
+> **执行时机决定评估范围**
+
+| 时间窗口 | 评估范围 | 理由 |
+|---------|---------|------|
+| 盘前（<9:30） | 全部 ~350 标的 | 开盘前充裕时间，可做完整扫描 |
+| 盘中（9:30-16:00） | 仅池内标的 | 避免在交易活跃时段浪费资源 |
+| 盘后（≥16:00） | 全部 ~350 标的 | 时间充裕，资源开销无限制 |
+
+### 4.2 两部分刷新动作
+
+| 刷新部分 | 说明 | 执行条件 |
+|---------|------|---------|
+| **池内标的再审核 (type-a)** | 对当前候选池内标的重新打分 | 始终执行（无论何时调用） |
+| **池外标的评估 (type-b)** | 对~350全量标的做完整评估 | 仅盘前/盘后执行 |
+
+**资源开销预估**：
+
+- 池内标的（25只）：~25 次 API 请求，约 30 秒
+- 全量标的（350只）：~350 次 API 请求，约 5-10 分钟
+
+### 4.3 实现逻辑
 
 ```python
-class WatchlistManager:
-    """标的池动态管理"""
-    
-    def __init__(self, max_size=15):
-        self.watchlist = []      # 当前标的池 (top 15)
-        self.observations = []    # 观察名单
-        self.holding = None      # 当前持仓标的
-        self.holding_since = None
-    
-    def select_candidates(self, market_data):
-        """从全市场筛选候选标的"""
-        # 1. 应用硬性过滤器
-        # 2. 计算技术面得分
-        # 3. 按得分排序
-        # 4. 取前15名
-    
-    def should_add(self, symbol, score):
-        """判断是否加入标的池"""
-        # 1. 不在黑名单
-        # 2. 不在现有池
-        # 3. 得分进入top15
-    
-    def should_remove(self, symbol, score):
-        """判断是否移出标的池"""
-        # 1. 超过6个月无信号
-        # 2. 得分跌出top20
-        # 3. 基本面恶化
-    
-    def on_position_opened(self, symbol):
-        """建仓后切换到持仓模式"""
-        self.holding = symbol
-        self.holding_since = datetime.now()
-        # 标的池锁定，不再新增
-    
-    def on_position_closed(self, symbol, pnl):
-        """平仓后重新进入标的筛选模式"""
-        self.holding = None
-        self.holding_since = None
-        # 清空池，重新筛选
-        self.watchlist = []
-        self._refresh_watchlist()
+def determine_scope() -> str:
+    """根据执行时间决定评估范围"""
+    et = get_current_et_time()
+    if et.hour < 9 or et.hour >= 16:
+        return "full"      # 盘前/盘后：全量评估
+    else:
+        return "pool_only" # 盘中：仅池内标的
 ```
 
 ---
 
-## 四、策略分工
+## 五、信号与订单链路
 
-### 4.1 所有策略定位
+### 5.1 整体流程
+
+```
+universe-refresh（盘后 18:00+）
+    │
+    ├─ 确定评估范围（全量或仅池内）
+    │
+    ├─ 获取市场数据
+    │
+    ├─ 评估候选标的，生成 PositionReview[]
+    │
+    ├─ 决定 PoolAction（8种）
+    │
+    ├─ 写入信号（仅非 HOLD action）
+    │       │
+    │       └─ 复用 watch_daemon 链路
+    │           ├─ 写入 signal_{YYYYMMDD_next}.json
+    │           │   └─ section = "signals_pre_market"（盘后执行）
+    │           │
+    │           └─ 调用 pre_market.execute()
+    │               ├─ 读取 signals_pre_market[]
+    │               ├─ process_signals() → 订单
+    │               ├─ 提交至 IBKR（pre-submit 状态）
+    │               └─ 标记 processed=true
+    │
+    └─ IBKR 持有订单，9:30am EST 自动成交
+```
+
+### 5.2 8种持仓决策映射
+
+| PoolAction | 信号 action | 触发条件 |
+|------------|-------------|---------|
+| ADD | BUY | 已有持仓，需加仓 |
+| OPEN | BUY | 无持仓，建议建仓 |
+| HOLD | — | 不操作 |
+| SKIP | — | 不操作 |
+| REDUCE | SELL | 减仓（止盈/减分/不在池） |
+| CLOSE | SELL | 清仓（止损/不在池） |
+
+### 5.3 复用现有链路的关键
+
+**任何触发源共享同一出口**：
+
+| 触发源 | 写入位置 | execute() 调用 | 后续流程 |
+|--------|---------|---------------|---------|
+| `universe-refresh`（盘后 18:00） | signals_pre_market | `pre_market.execute()` | 订单→IBKR→次日开盘 |
+| `universe-refresh`（盘中 14:00 人工） | signals_intra_day | `intra_day.execute()` | 同上，开盘可成交 |
+| watch daemon 轮询信号 | 同上逻辑 | 同上 | 同上 |
+
+**一个统一出口，三种触发方式共享同一结果处理链**（通知、绩效记录、冷却期标记等）。
+
+---
+
+## 六、持仓决策逻辑（8种）
+
+### 6.1 决策矩阵
+
+| 持仓状态 | 标的在池中 | 标的不在池中 | 得分变化 |
+|---------|-----------|-------------|---------|
+| **已有持仓** | HOLD（持有多日）或 ADD（刚进入池） | REDUCE（减半仓）或 CLOSE（清仓） | - |
+| **无持仓** | OPEN（满足条件）或 SKIP（不满足） | 不评估 | - |
+
+### 6.2 具体决策规则
+
+```
+对于每个标的：
+
+if 有持仓:
+    if 不在候选池:
+        if 亏损 > stop_loss_pct: CLOSE（止损）
+        else: REDUCE（减半仓）
+    else:
+        if 池内排名上升且 score >= threshold: ADD（加仓）
+        else: HOLD（持有）
+
+else（无持仓）:
+    if 在候选池:
+        if score >= threshold: OPEN（建仓）
+        else: SKIP（观察）
+    else:
+        SKIP（不在池中）
+```
+
+### 6.3 信号生成规则
+
+- **ADD / OPEN** → 生成 `BUY` 信号，数量为建议股数
+- **REDUCE / CLOSE** → 生成 `SELL` 信号，数量为建议股数
+- **HOLD / SKIP** → 不生成信号
+
+---
+
+## 七、系统实现架构
+
+### 7.1 模块结构
+
+```
+src/trading/
+├── universe_selector.py    # 候选池管理器（已完成）
+│   ├── UniverseSelector    # 核心评估类
+│   ├── Candidate           # 单标的评估结果
+│   ├── PositionReview      # 持仓审核结果（含 action）
+│   ├── PoolAction          # 8种决策枚举
+│   └── UniverseSelectorReport  # 完整报告
+│
+├── pre_market.py           # 盘前执行（已存在）
+├── intra_day.py            # 盘中执行（已存在）
+└── watch_daemon.py         # 实时监控（已存在）
+```
+
+### 7.2 UniverseSelector 核心接口
+
+```python
+class UniverseSelector:
+    def __init__(self, candidates: list, config: dict, market_data_provider, positions: list):
+        """candidates: 候选标的列表（来自 ibkr.yaml）"""
+
+    def evaluate(self) -> UniverseSelectorReport:
+        """执行完整评估，返回报告"""
+
+    def _evaluate_positions(self) -> list[PositionReview]:
+        """评估现有持仓（8种决策）"""
+
+    def _rank_candidates(self) -> list[Candidate]:
+        """对候选标的排序"""
+
+    def _decide_actions(self) -> list[PoolAction]:
+        """决定每个持仓的 action"""
+
+class PositionReview:
+    symbol: str
+    action: PoolAction          # 8种决策
+    suggested_qty_change: int   # 正=买，负=卖
+    suggested_reason: str
+    score: float
+    current_price: float
+
+class PoolAction(Enum):
+    HOLD = "hold"
+    ADD = "add"
+    REDUCE = "reduce"
+    CLOSE = "close"
+    OPEN = "open"
+    SKIP = "skip"
+```
+
+### 7.3 配置文件结构
+
+```yaml
+# config/ibkr.yaml
+
+watch:
+  candidate_pool:
+    - NVDA
+    - AVGO
+    - MRVL
+    # ... 共25只
+
+universe_selector:
+  required_passing: 4          # 满足≥4个技术条件
+  min_score_threshold: 4.0     # 最低得分
+  max_positions: 2             # 最大持仓数（实验期保守）
+  take_profit_pct: 20          # 止盈20%
+  stop_loss_pct: 10           # 止损10%
+  blacklist:
+    - TSLA
+    - CEG
+    - VST
+    - F
+```
+
+---
+
+## 八、ibclient 命令集成
+
+### 8.1 命令接口
+
+```bash
+# 手动执行（任意时刻）
+ibclient universe-refresh
+
+# 输出示例
+=== Universe Selector Report (2026-07-18) ===
+Pool: 25 candidates, 1 positions
+Scope: FULL (post-market)
+
+Position Reviews:
+  NVDA  ADD     +100  (score=7.2, in_pool_rank=1)
+  VRT   HOLD    0     (score=5.1, in_pool_rank=3)
+  GOOGL OPEN    +100  (score=6.8, in_pool_rank=2)
+
+Signals Generated: 2 BUY
+Written to: signals_pre_market (pre_market execute triggered)
+```
+
+### 8.2 执行时机判断
+
+```python
+def get_execution_scope() -> str:
+    """根据当前时间判断评估范围"""
+    et = get_current_et_time()
+    if et.hour < 9 or et.hour >= 16:
+        return "full"      # 盘前/盘后：评估全部
+    else:
+        return "pool_only" # 盘中：仅池内标的
+```
+
+---
+
+## 九、策略分工
+
+### 9.1 所有策略定位
 
 | 策略 | 标的池 | 监控周期 | 目的 | 状态 |
 |------|--------|---------|------|------|
-| **strong_accumulation** | 动态top15 | 每日筛选 | 2-6个月中长期 | **新开发** |
+| **strong_accumulation** | 动态top15 | 每日筛选 | 2-6个月中长期 | **实现中** |
 | trend_entry | 固定配置 | 持续监控 | 趋势跟踪 | 维护 |
 | dip_buy | 固定配置 | 持续监控 | 回调买入实验 | 实验性 |
 | ma_buy | 固定配置 | 持续监控 | 均线买入实验 | 实验性 |
 
-### 4.2 关键区别
+### 9.2 关键区别
 
 | 维度 | 新策略 | 其他策略 |
 |------|--------|---------|
@@ -264,54 +467,11 @@ class WatchlistManager:
 | 策略重心 | 标的选择+持仓管理 | 信号生成 |
 | 建仓后 | 专注持仓，不新增标的 | 继续生成信号 |
 
-### 4.3 实验性策略的定位
-
-其他策略（trend_entry/dip_buy/ma_buy）作为实验性测试：
-- 用于积累策略经验
-- 验证不同条件组合的效果
-- 为未来新策略提供数据支撑
-- **不作为主要盈利用途**
-
 ---
 
-## 五、实现路径
+## 十、风险与限制
 
-```
-Phase 1: 创建 strong_accumulation.yaml 策略模板
-         ├─ 技术面条件定义
-         ├─ 建仓/加仓/止盈止损逻辑
-         └─ 与现有模板分离独立运行
-         ↓
-Phase 2: 实现 WatchlistManager 标的池管理模块
-         ├─ 全市场扫描接口
-         ├─ 硬性过滤器
-         ├─ 技术面打分系统
-         ├─ 动态排序算法
-         └─ 两阶段状态机
-         ↓
-Phase 3: 配置初始标的池
-         ├─ 制定标的纳入标准
-         ├─ 手动筛选10-15只候选
-         └─ 验证扫描逻辑
-         ↓
-Phase 4: 回测验证
-         ├─ 历史数据回测
-         ├─ 参数优化
-         └─ 风险评估
-         ↓
-Phase 5: 模拟盘验证
-         ├─ Paper Trading 运行
-         └─ 观察3个月表现
-         ↓
-Phase 6: 实盘部署
-         └─ 小资金开始实盘
-```
-
----
-
-## 六、风险与限制
-
-### 6.1 系统风险
+### 10.1 系统风险
 
 | 风险 | 应对 |
 |------|------|
@@ -319,7 +479,7 @@ Phase 6: 实盘部署
 | 流动性不足 | 仅选日均成交>$5000万标的 |
 | 持仓集中 | 单标的最大仓位控制 |
 
-### 6.2 策略风险
+### 10.2 策略风险
 
 | 风险 | 应对 |
 |------|------|
@@ -327,7 +487,7 @@ Phase 6: 实盘部署
 | 持有周期过长 | 6个月强制平仓 |
 | 频繁换仓 | 建仓后锁定标的池 |
 
-### 6.3 操作风险
+### 10.3 操作风险
 
 | 风险 | 应对 |
 |------|------|
@@ -337,15 +497,36 @@ Phase 6: 实盘部署
 
 ---
 
-## 七、待确认事项
+## 十一、TODO
 
-1. **标的纳入标准**: 硬性条件和技术面条件是否需要调整？
-2. **打分权重**: 各技术面条件的权重如何分配？
-3. **初始标的池**: 是否需要手动指定第一批候选标的？
-4. **回测时间范围**: 用多长历史数据验证？
-5. **实盘资金比例**: 初期用多少资金参与？
+- [ ] **ibclient universe-refresh 命令** — 写入 signal JSON + 触发 execute()（当前实现阶段）
+- [ ] **post-market 集成** — 在盘后报告生成流程中调用 UniverseSelector
+- [ ] **watch daemon 整合** — 盘中（9:30-16:00）执行时，仅对池内标的再审核（type-a）
+- [ ] **回测验证** — 历史数据回测验证策略有效性
+- [ ] **实盘部署** — Paper Trading 验证后小资金实盘
 
 ---
 
-**文档版本**: v1.0  
-**下次更新**: 实现Phase 1完成后
+## 十二、实现状态
+
+### 已完成
+
+| 模块 | 文件 | 状态 |
+|------|------|------|
+| UniverseSelector | `src/trading/universe_selector.py` | ✅ 已完成 |
+| WatchlistManager | `src/core/watchlist_manager.py` | ✅ 已完成 |
+| 配置集成 | `config/ibkr.yaml` + `config/config.py` | ✅ 已完成 |
+| ibclient 命令框架 | `skills/ibclient-all-in-one/ibclient.py` | ⚠️ 部分完成（待信号写入） |
+
+### 待实现
+
+| 模块 | 说明 | 优先级 |
+|------|------|--------|
+| `cmd_universe_refresh` 信号写入 | 追加信号到 signal JSON + 触发 execute() | 🔴 高 |
+| post-market 集成 | 盘后报告生成时调用 UniverseSelector | 🟡 中 |
+| watch daemon 整合 | 盘中执行时仅池内标的 | 🟢 低 |
+
+---
+
+**文档版本**: v1.1  
+**下次更新**: ibclient universe-refresh 命令完成后

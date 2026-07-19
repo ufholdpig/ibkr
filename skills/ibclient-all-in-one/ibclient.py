@@ -17,12 +17,18 @@ IBKR All-in-One CLI Client
          pre-market          执行盘前交易
          intra-day           执行盘中交易
          post-market         生成盘后交易报告
+         universe-refresh    刷新候选池（每日盘后调用）
          watch [symbol]      启动 Watch 守护进程（默认从 config 读取多标的）
          watch --on          唤醒 Watch 守护进程（SIGUSR1）
          watch --off         休眠 Watch 守护进程（SIGUSR2）
          strategy-list                列出策略变更（含已审批和待审批）
          strategy-approve <item_id>   批准策略变更
          strategy-reject <item_id>    拒绝策略变更
+
+    universe-refresh 用法:
+   %(prog)s universe-refresh                  # 刷新候选池，打印摘要
+   %(prog)s universe-refresh --date 20250718 # 指定日期
+   %(prog)s universe-refresh --output /path/to/report.json  # 保存 JSON 报告
 """
 
 import argparse
@@ -281,6 +287,175 @@ def cmd_post_market(args):
 
     success = execute(date=args.date, account=args.account)
     return 0 if success else 1
+
+
+def cmd_universe_refresh(args):
+    """刷新候选池（供盘后调用，或独立运行）"""
+    from src.trading.universe_selector import create_universe_selector
+    from src.core.client import IBKRClient
+    from config.config import load_config
+    import json
+    from typing import Dict
+
+    config = load_config()
+    client = IBKRClient(config)
+
+    try:
+        result = client.connect()
+        if not result.success:
+            logger.info(f"❌ 连接失败: {result.error_message}")
+            return 1
+
+        # 获取候选池标的列表
+        selector = create_universe_selector()
+        symbols = list(selector.candidate_symbols)
+
+        if not symbols:
+            logger.info("❌ 候选池为空，请检查 config candidate_pool 配置")
+            return 1
+
+        # 根据执行时间决定评估范围（盘中仅池内，盘前/后全量）
+        from src.core.paths import get_current_et_time
+        et = get_current_et_time()
+        execution_scope = "full" if (et.hour < 9 or et.hour >= 16) else "pool_only"
+        logger.info(f"📊 获取 {len(symbols)} 只候选标的的市场数据... [scope={execution_scope}]")
+        raw_data = client.get_market_data(symbols, timeout=30)
+        
+        # 转换为 UniverseSelector 需要的 MarketData 格式
+        from src.core.strategy import MarketData
+        market_data_map: Dict[str, MarketData] = {}
+        
+        for sym in symbols:
+            d = raw_data.get(sym, {})
+            if not d or not d.get("price"):
+                logger.warning(f"  ⚠️ {sym}: 无有效价格数据，跳过")
+                continue
+            md = MarketData(
+                symbol=sym,
+                price=d.get("price", 0),
+                volume=d.get("volume", 0),
+                rsi_14=d.get("rsi"),
+                ma_20=d.get("ma20"),
+                ma_50=d.get("ma50"),
+                ma_200=d.get("ma200"),
+                ma_200_slope=d.get("ma200_slope"),
+                ma_50_slope=d.get("ma50_slope"),
+                volume_ratio=d.get("volume_ratio"),
+                high_52w=d.get("high_52w"),
+                low_52w=d.get("low_52w"),
+            )
+            market_data_map[sym] = md
+
+        if not market_data_map:
+            logger.info("❌ 所有候选标的均无有效数据")
+            return 1
+
+        # 刷新候选池
+        selector.refresh(market_data_map)
+
+        # 获取持仓
+        account_info = client.get_account_info(timeout=30)
+        positions = [
+            {
+                "symbol": p.symbol,
+                "quantity": p.quantity,
+                "avg_cost": p.average_cost,
+                "market_price": market_data_map[p.symbol].price if p.symbol in market_data_map else 0,
+            }
+            for p in account_info.positions
+            if p.quantity > 0 and p.symbol in market_data_map
+        ]
+
+        # 评估报告
+        report = selector.generate_report(
+            report_date=args.date or "",
+            positions=positions,
+        )
+
+        # 输出结果
+        report_dict = report.to_dict()
+
+        if args.output:
+            output_path = Path(args.output)
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(report_dict, f, indent=2, ensure_ascii=False)
+            logger.info(f"✅ 报告已保存: {output_path}")
+
+        # 打印摘要
+        logger.info(f"\n📊 候选池评估报告 — {report.report_date}")
+        logger.info(f"   候选池: {report.candidate_count} 只通过评审")
+
+        if report.candidate_pool:
+            logger.info("   TOP5 标的:")
+            for i, c in enumerate(report.candidate_pool[:5], 1):
+                logger.info(f"     #{i} {c.symbol}: score={c.score:.1f}, pass={c.passing_count}/7")
+
+        if report.position_reviews:
+            logger.info("   持仓评审:")
+            for r in report.position_reviews:
+                pnl_pct = f"{r.unrealized_pnl_pct:+.1f}%" if r.unrealized_pnl_pct else "N/A"
+                logger.info(
+                    f"     {r.symbol}: {r.action.value} | 盈亏{pnl_pct} | {r.reason}"
+                )
+
+        if report.opening_suggestions:
+            logger.info(f"   建仓建议: {[c.symbol for c in report.opening_suggestions]}")
+
+        if report.actions_summary:
+            summary_str = ", ".join(f"{k}:{v}" for k, v in report.actions_summary.items())
+            logger.info(f"   动作汇总: {summary_str}")
+
+        # 生成信号并写入 signal JSON（复用 watch_daemon 链路）
+        from src.core.signal import SignalGenerator
+        from src.trading.universe_selector import PoolAction
+
+        signals_to_write = []
+        for review in report.position_reviews:
+            if review.action == PoolAction.HOLD or review.action == PoolAction.SKIP:
+                continue
+            signals_to_write.append({
+                "strategy_name": "universe-selector",
+                "strategy_id": "universe-refresh",
+                "symbol": review.symbol,
+                "action": "SELL" if review.action in (PoolAction.REDUCE, PoolAction.CLOSE) else "BUY",
+                "quantity": abs(review.suggested_qty_change),
+                "reason": review.reason or review.action.value,
+                "source": "universe-refresh",
+                "processed": False,
+            })
+
+        if signals_to_write:
+            # 写入信号文件
+            et = get_current_et_time()
+            before_open = et.hour < 9 or (et.hour == 9 and et.minute < 30)
+            after_close = et.hour >= 16
+            section = "signals_pre_market" if (before_open or after_close) else "signals_intra_day"
+
+            generator = SignalGenerator()
+            signal_data = generator._load_signal_file()
+            for sd in signals_to_write:
+                signal_data.setdefault(section, []).append(sd)
+            generator._save_signal_file(signal_data)
+
+            logger.info(f"✅ 写入 {len(signals_to_write)} 个信号到 {section}，触发 execute()")
+
+            # 触发 execute（复用 watch_daemon 链路）
+            if before_open or after_close:
+                from src.trading.pre_market import execute as premkt_exec
+                premkt_exec()
+            else:
+                from src.trading.intra_day import execute as intra_exec
+                intra_exec()
+        else:
+            logger.info("ℹ️  无需执行的信号（全部 HOLD/SKIP）")
+
+        client.disconnect()
+        return 0
+
+    except Exception as e:
+        logger.error(f"❌ 错误: {e}")
+        traceback.print_exc()
+        return 1
 
 
 def cmd_watch(args):
@@ -611,6 +786,12 @@ def main():
     p_postmarket.add_argument("--account", type=str, default="", help="账户 ID")
     p_postmarket.add_argument("--timeout", type=int, default=30, help="超时秒数")
     p_postmarket.set_defaults(func=cmd_post_market)
+
+    # universe-refresh
+    p_universe = subparsers.add_parser("universe-refresh", help="刷新候选池（盘后调用）")
+    p_universe.add_argument("--date", type=str, default="", help="日期 (YYYYMMDD)")
+    p_universe.add_argument("--output", type=str, default="", help="输出 JSON 报告路径")
+    p_universe.set_defaults(func=cmd_universe_refresh)
 
     # order-list
     subparsers.add_parser("order-list", help="列出待审批订单").set_defaults(func=cmd_order_list)

@@ -30,6 +30,7 @@ class WatchConfig:
 
     templates: {template_name: [symbols]} — 每个模版绑定适用的标的列表
     cooldown_minutes: {symbol: minutes, "default": minutes} — 标的冷却时间
+    candidate_pool: [symbols] — 候选池（由 UniverseSelector 使用）
     """
     templates: dict = field(default_factory=dict)
     cooldown_minutes: dict = field(default_factory=lambda: {"default": 20})
@@ -37,6 +38,7 @@ class WatchConfig:
     indicator_refresh_minutes: int = 30
     template_dir: str = "strategy/templates"
     real_cooldown_multiplier: float = 4.0
+    candidate_pool: list = field(default_factory=list)
 
     @property
     def symbol_list(self) -> list[str]:
@@ -63,6 +65,25 @@ class RiskConfig:
     position_limit_pct: float = 20.0
     max_order_value_pct: float = 50.0  # 单笔订单价值 ≤ 账户净值的百分比
     tfsa_limitation: bool = True
+
+
+@dataclass
+class UniverseSelectorConfig:
+    """候选池选择器配置"""
+    enabled: bool = True
+    max_positions: int = 2
+    min_positions: int = 1
+    required_passing: int = 4
+    min_score_threshold: float = 4.0
+    # 持仓评估
+    take_profit_pct: float = 20.0
+    stop_loss_pct: float = -10.0
+    reduce_ratio: float = 0.5
+    # 黑名单
+    blacklist: list = field(default_factory=list)
+    # 建仓参数
+    default_position_size_pct: float = 10.0
+    top_n: int = 3
 
 
 @dataclass
@@ -150,6 +171,7 @@ class IBKRConfig:
     gateway: GatewayConfig = field(default_factory=GatewayConfig)
     watch: WatchConfig = field(default_factory=WatchConfig)
     risk_engine: RiskConfig = field(default_factory=RiskConfig)
+    universe_selector: UniverseSelectorConfig = field(default_factory=UniverseSelectorConfig)
 
     @classmethod
     def from_yaml(cls, config_path: str) -> "IBKRConfig":
@@ -203,6 +225,7 @@ class IBKRConfig:
             indicator_refresh_minutes=watch_data.get("indicator_refresh_minutes", 30),
             template_dir=watch_data.get("template_dir", "strategy/templates"),
             real_cooldown_multiplier=watch_data.get("real_cooldown_multiplier", 4.0),
+            candidate_pool=watch_data.get("candidate_pool", []),
         )
         
         # 加载风控引擎配置
@@ -214,9 +237,26 @@ class IBKRConfig:
             max_order_value_pct=risk_data.get("max_order_value_pct", 50.0),
             tfsa_limitation=risk_data.get("tfsa_limitation", True),
         )
-        
+
+        # 加载候选池选择器配置
+        universe_data = ibkr_data.get("universe_selector", {})
+        universe_selector = UniverseSelectorConfig(
+            enabled=universe_data.get("enabled", True),
+            max_positions=universe_data.get("max_positions", 2),
+            min_positions=universe_data.get("min_positions", 1),
+            required_passing=universe_data.get("required_passing", 4),
+            min_score_threshold=universe_data.get("min_score_threshold", 4.0),
+            take_profit_pct=universe_data.get("position_review", {}).get("take_profit_pct", 20.0),
+            stop_loss_pct=universe_data.get("position_review", {}).get("stop_loss_pct", -10.0),
+            reduce_ratio=universe_data.get("position_review", {}).get("reduce_ratio", 0.5),
+            blacklist=universe_data.get("blacklist", []),
+            default_position_size_pct=universe_data.get("opening", {}).get("default_position_size_pct", 10.0),
+            top_n=universe_data.get("opening", {}).get("top_n", 3),
+        )
+
         return cls(market_data_source=market_data_source, approval_required=approval_required,
-                    gateway=gateway, watch=watch, risk_engine=risk_engine)
+                    gateway=gateway, watch=watch, risk_engine=risk_engine,
+                    universe_selector=universe_selector)
 
 
 # =============================================================================
