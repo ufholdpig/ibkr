@@ -7,5 +7,4 @@ from src.trading.universe_selector import (
     PoolAction,
     Candidate,
     create_universe_selector,
-    DEFAULT_CANDIDATE_POOL,
 )

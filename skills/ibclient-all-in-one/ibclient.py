@@ -316,39 +316,40 @@ def cmd_universe_refresh(args):
 
         # 根据执行时间决定评估范围（盘中仅池内，盘前/后全量）
         from src.core.paths import get_current_et_time
+        from src.core.market_data import MarketDataProvider
+        from src.core.strategy import MarketData
+
         et = get_current_et_time()
         execution_scope = "full" if (et.hour < 9 or et.hour >= 16) else "pool_only"
         logger.info(f"📊 获取 {len(symbols)} 只候选标的的市场数据... [scope={execution_scope}]")
-        raw_data = client.get_market_data(symbols, timeout=30)
-        
-        # 转换为 UniverseSelector 需要的 MarketData 格式
-        from src.core.strategy import MarketData
+
+        # 使用 MarketDataProvider（有 yfinance fallback）获取历史数据并计算技术指标
+        data_source = getattr(config, 'market_data_source', 'yfinance')
+        provider = MarketDataProvider(client, data_source=data_source)
         market_data_map: Dict[str, MarketData] = {}
-        
+
         for sym in symbols:
-            d = raw_data.get(sym, {})
-            if not d or not d.get("price"):
-                logger.warning(f"  ⚠️ {sym}: 无有效价格数据，跳过")
+            bars = provider.fetch_historical(sym, days=250)
+            if not bars or len(bars) < 60:
+                logger.warning(f"  ⚠️ {sym}: 历史数据不足（{len(bars) if bars else 0} bars），跳过")
                 continue
+            ind = provider.compute_indicators(bars)
             md = MarketData(
                 symbol=sym,
-                price=d.get("price", 0),
-                volume=d.get("volume", 0),
-                rsi_14=d.get("rsi"),
-                ma_20=d.get("ma20"),
-                ma_50=d.get("ma50"),
-                ma_200=d.get("ma200"),
-                ma_200_slope=d.get("ma200_slope"),
-                ma_50_slope=d.get("ma50_slope"),
-                volume_ratio=d.get("volume_ratio"),
-                high_52w=d.get("high_52w"),
-                low_52w=d.get("low_52w"),
+                price=bars[-1].close,
+                volume=bars[-1].volume,
+                high_52w=max(b.close for b in bars[-252:]) if len(bars) >= 252 else None,
+                low_52w=min(b.close for b in bars[-252:]) if len(bars) >= 252 else None,
+                **ind
             )
             market_data_map[sym] = md
 
         if not market_data_map:
             logger.info("❌ 所有候选标的均无有效数据")
+            client.disconnect()
             return 1
+
+        logger.info(f"✅ 获取 {len(market_data_map)} 只标的的技术指标")
 
         # 刷新候选池
         selector.refresh(market_data_map)
