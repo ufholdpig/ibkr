@@ -649,14 +649,23 @@ class IBKRClient:
         )
 
     def disconnect(self):
-        """断开连接"""
+        """断开连接（带超时保护）"""
+        import threading
         if self._api_client and self._api_client.isConnected():
-            try:
-                self._api_client.disconnect()
-                logger.info("已断开IBKR连接")
-            except Exception as e:
-                logger.error(f"断开连接时出错: {e}")
-
+            result = [None]
+            def _disconnect():
+                try:
+                    self._api_client.disconnect()
+                    result[0] = "ok"
+                    logger.info("已断开IBKR连接")
+                except Exception as e:
+                    result[0] = f"err:{e}"
+                    logger.error(f"断开连接时出错: {e}")
+            t = threading.Thread(target=_disconnect)
+            t.start()
+            t.join(timeout=5)
+            if t.is_alive():
+                logger.warning("IBKR disconnect 超时，强制终止")
         self._api_client = None
         self._event_thread = None
 

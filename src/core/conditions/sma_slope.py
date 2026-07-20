@@ -1,4 +1,21 @@
-"""SMA斜率角度条件: 检查均线斜率是否在指定角度范围内"""
+"""SMA斜率角度条件: 检查均线斜率是否在指定角度范围内
+
+支持双向范围: slope 在 [threshold, multiplier] 之间 (当 operator=">")
+支持负数: threshold 可以是负值，用于检测 [-3, 3]° 走平区间
+
+YAML usage:
+    - type: sma_slope
+      period: 200
+      threshold: -3          # 最小角度 (可以是负数)
+      multiplier: 3          # 最大角度
+      operator: ">"           # 范围模式: threshold <= slope <= multiplier
+
+    - type: sma_slope
+      period: 50
+      threshold: 0
+      multiplier: 90
+      operator: ">"           # 正斜率模式: 0 <= slope <= 90
+"""
 
 from .base import ConditionEvaluator, ConditionContext
 from . import register, _find_market_data
@@ -6,16 +23,6 @@ from . import register, _find_market_data
 
 @register("sma_slope")
 class SMASlopeEvaluator(ConditionEvaluator):
-    """Check if SMA slope angle is within a range.
-
-    YAML usage:
-        - type: sma_slope
-          period: 50          # which SMA (50 or 200)
-          threshold: 5        # min angle (degrees)
-          multiplier: 45      # max angle (degrees), reusing multiplier field
-          operator: ">"       # slope must be positive (default)
-    """
-
     def evaluate(self, node, context: ConditionContext) -> bool:
         if not context.market_data:
             return False

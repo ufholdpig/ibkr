@@ -30,38 +30,9 @@ ibkr:
     cooldown_minutes:
       default: 20
 
-    # 候选池：所有候选标的（UniverseSelector 从中筛选）
-    # 后续由 UniverseSelector 每日盘后动态评估
-    candidate_pool:
-      # AI/云计算/半导体
-      - NVDA
-      - AVGO
-      - MRVL
-      - AMD
-      - CRM
-      # 金融科技
-      - PYPL
-      - SQ
-      - COIN
-      - V
-      # 半导体制造
-      - ASML
-      - TSM
-      - AMAT
-      - KLAC
-      # 云计算/SaaS
-      - MSFT
-      - GOOGL
-      - AMZN
-      - SNOW
-      - WDAY
-      # 防御型
-      - JPM
-      - BAC
-      - WFC
-
-    # 已禁用策略模板（保留空配置，仅确保 watch 进程不报错）
+    # 策略模板 — strong_accumulation 由 universe-refresh 盘后动态更新
     templates:
+      strong_accumulation: []
       trend_entry: []
       trend_entry.1: []
       trend_entry.2: []
@@ -83,41 +54,3 @@ ibkr:
     tfsa_limitation: true     # false=保证金/普通账户
     fail_closed: false        # true: 风控不可用时拒绝交易（实盘必须 true）
     position_limit_pct: 20.0
-
-  # 候选池选择器配置 (UniverseSelector)
-  # 每个交易日盘后由 post-market 调用，动态刷新候选池
-  universe_selector:
-    enabled: true
-    
-    # 最大持仓数量: 1-2 只（实验期保守）
-    max_positions: 2
-    min_positions: 1
-    
-    # 入围条件：至少满足 N 个条件
-    required_passing: 4
-    
-    # 最低得分门槛
-    min_score_threshold: 4.0
-    
-    # 持仓评估参数
-    position_review:
-      # 盈利超过此比例触发止盈（减半仓）
-      take_profit_pct: 20.0
-      # 亏损超过此比例触发止损（清仓）
-      stop_loss_pct: -10.0
-      # 减仓比例（当池内排名下降但未完全出池时）
-      reduce_ratio: 0.5
-    
-    # 黑名单：永不纳入
-    blacklist:
-      - F      # 福特，历史表现差
-      - TSLA   # 波动太大
-      - VST    # 能源股，周期性强
-      - CEG    # 核能，政策风险
-    
-    # 建仓参数
-    opening:
-      # 默认仓位（账户净值的百分比）
-      default_position_size_pct: 10.0
-      # 建仓候选数量（从池中选 top N 建议）
-      top_n: 3

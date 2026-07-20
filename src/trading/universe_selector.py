@@ -210,6 +210,9 @@ class UniverseSelector:
         self.DEFAULT_POSITION_SIZE_PCT: float = opening_cfg.get("default_position_size_pct", 10.0)
         self.TOP_N: int = opening_cfg.get("top_n", 3)
         
+        # 候选池容量（盘后刷新后保留 top N）
+        self.CAPACITY: int = cfg.get("capacity", 10)
+        
         self._candidate_symbols: Set[str] = set(candidate_symbols or [])
         self.candidates: List[Candidate] = []
         self.last_refresh: Optional[datetime] = None
@@ -217,9 +220,14 @@ class UniverseSelector:
         self.logger = logging.getLogger(self.__class__.__name__)
         self.logger.info(
             f"UniverseSelector 初始化: 候选标的={len(self._candidate_symbols)}, "
-            f"持仓限制={self.MIN_POSITIONS}-{self.MAX_POSITIONS}, "
+            f"容量={self.CAPACITY}, 持仓限制={self.MIN_POSITIONS}-{self.MAX_POSITIONS}, "
             f"入围条件≥{self.REQUIRED_PASSING}, 得分≥{self.MIN_SCORE_THRESHOLD}"
         )
+    
+    @property
+    def top2(self) -> List[str]:
+        """当前排名前2的标的（用于 top2 决策框架）"""
+        return [c.symbol for c in self.candidates[:2]]
     
     @property
     def candidate_symbols(self) -> Set[str]:
@@ -250,7 +258,7 @@ class UniverseSelector:
         Returns:
             通过评审的候选标的列表
         """
-        self.logger.info(f"刷新候选池，候选标的数: {len(self._candidate_symbols)}")
+        self.logger.debug(f"刷新候选池 START，候选标的数: {len(self._candidate_symbols)}")
         
         candidates = []
         hist_data = historical_data or {}
@@ -273,12 +281,20 @@ class UniverseSelector:
             if c.passing_count >= self.REQUIRED_PASSING and c.score >= self.MIN_SCORE_THRESHOLD
         ]
         
+        # 应用容量限制（取 top N）
+        if self.CAPACITY and len(self.candidates) > self.CAPACITY:
+            self.candidates = self.candidates[:self.CAPACITY]
+        
+        # 保存所有评估过的标的（用于持仓判断：是否曾经通过评估）
+        self._evaluated_candidates = candidates
+        
         self.last_refresh = datetime.now()
         
         self.logger.info(f"候选池刷新完成: {len(self.candidates)} 只通过评审")
         for i, c in enumerate(self.candidates[:5]):
             self.logger.debug(f"  #{i+1} {c.symbol}: score={c.score:.1f}, pass={c.passing_count}/7")
         
+        self.logger.debug(f"刷新候选池 END，通过评审 {len(self.candidates)} 只，评估 {len(self._evaluated_candidates)} 只")
         return self.candidates
     
     def _evaluate_candidate(self, symbol: str, data: MarketData, 
@@ -327,18 +343,31 @@ class UniverseSelector:
         c.calc_score()
         return c
     
-    def evaluate_positions(self, positions: List[dict]) -> List[PositionReview]:
-        """评审当前持仓
+    def evaluate_positions(self, positions: List[dict], 
+                            scope: str = "post_market",
+                            old_top2: List[str] = None) -> List[PositionReview]:
+        """评审当前持仓（Top2 决策框架）
         
         Args:
             positions: 持仓列表，每项包含 symbol/qty/avg_cost/market_price
+            scope: "intra_day"（盘中）或 "post_market"（盘后）
+            old_top2: 旧池的前2名（刷新前的 ibkr.yaml top2）
         
         Returns:
             持仓评审结果列表
         """
-        self.logger.info(f"评审持仓，{len(positions)} 个标的")
+        self.logger.info(f"评审持仓，{len(positions)} 个标的（scope={scope}）")
         
+        if old_top2 is None:
+            old_top2 = []
+        new_top2 = self.top2
+        
+        self.logger.info(f"Top2 变化: {old_top2} → {new_top2}")
+        
+        # 候选池：排序后通过阈值的（用于建仓决策）
         pool_symbols = {c.symbol for c in self.candidates}
+        # 评估过的标的：所有经过评估的候选（用于持仓判断：是否曾经通过评估）
+        qualified_symbols = {c.symbol for c in getattr(self, '_evaluated_candidates', [])}
         pool_rank_map = {c.symbol: i+1 for i, c in enumerate(self.candidates)}
         
         reviews = []
@@ -351,9 +380,10 @@ class UniverseSelector:
             if qty <= 0:
                 continue
             
-            in_pool = symbol in pool_symbols
+            in_pool = symbol in qualified_symbols
+            in_new_top2 = symbol in new_top2
+            in_old_top2 = symbol in old_top2
             pool_rank = pool_rank_map.get(symbol, 0)
-            pool_score = next((c.score for c in self.candidates if c.symbol == symbol), 0)
             
             # 计算盈亏
             unrealized_pnl = (market_price - avg_cost) * qty
@@ -365,7 +395,7 @@ class UniverseSelector:
                 reason="默认持有",
                 in_pool=in_pool,
                 pool_rank=pool_rank,
-                pool_score=pool_score,
+                pool_score=0,
                 current_qty=qty,
                 current_price=market_price,
                 avg_cost=avg_cost,
@@ -373,37 +403,42 @@ class UniverseSelector:
                 unrealized_pnl_pct=unrealized_pnl_pct,
             )
             
-            # 决策逻辑
-            if not in_pool:
-                # 不在池中：平仓
-                review.action = PoolAction.CLOSE
-                review.reason = f"标的已不在候选池（排名#{pool_rank}），触发平仓"
-                review.suggested_qty_change = -qty
-                review.suggested_reason = "不在候选池内"
-            elif pool_score < self.MIN_SCORE_THRESHOLD:
-                # 得分过低：减仓
-                review.action = PoolAction.REDUCE
-                review.reason = f"候选池排名#{pool_rank}，得分{pool_score:.1f}偏低，适度减仓"
-                review.suggested_qty_change = -int(qty * self.REDUCE_RATIO)
-                review.suggested_reason = f"得分低({pool_score:.1f}<{self.MIN_SCORE_THRESHOLD})"
-            elif unrealized_pnl_pct > self.TAKE_PROFIT_PCT:
-                # 盈利超过阈值：止盈
-                review.action = PoolAction.REDUCE
-                review.reason = f"盈利{unrealized_pnl_pct:.1f}%，触发止盈"
-                review.suggested_qty_change = -int(qty * self.REDUCE_RATIO)
-                review.suggested_reason = f"盈利超{self.TAKE_PROFIT_PCT}%止盈"
-            elif unrealized_pnl_pct < self.STOP_LOSS_PCT:
-                # 亏损超过阈值：止损
-                review.action = PoolAction.CLOSE
-                review.reason = f"亏损{unrealized_pnl_pct:.1f}%，触发止损"
-                review.suggested_qty_change = -qty
-                review.suggested_reason = f"亏损超{abs(self.STOP_LOSS_PCT)}%止损"
+            # Top2 决策逻辑
+            if in_new_top2:
+                if in_old_top2:
+                    # 一直在 top2 内：持有
+                    review.action = PoolAction.HOLD
+                    review.reason = f"Top2 内（排名#{pool_rank}），持有"
+                    review.suggested_qty_change = 0
+                    review.suggested_reason = "top2 稳定"
+                else:
+                    # 新入 top2：加仓
+                    review.action = PoolAction.ADD
+                    review.reason = f"新入 Top2（排名#{pool_rank}），加仓"
+                    review.suggested_qty_change = int(qty * 0.5)  # 加半仓
+                    review.suggested_reason = "新入 top2"
             else:
-                # 正常持有
-                review.action = PoolAction.HOLD
-                review.reason = f"候选池#{pool_rank}，得分{pool_score:.1f}，盈亏{unrealized_pnl_pct:+.1f}%"
-                review.suggested_qty_change = 0
-                review.suggested_reason = "正常持有"
+                # 退出 top2
+                if not in_pool:
+                    # 完全不在池中（盘后）：清仓
+                    review.action = PoolAction.CLOSE
+                    review.reason = f"标的已不在候选池（排名#{pool_rank}），触发平仓"
+                    review.suggested_qty_change = -qty
+                    review.suggested_reason = "不在候选池内"
+                else:
+                    # 还在池内但不在 top2
+                    if scope == "intra_day":
+                        # 盘中：减仓
+                        review.action = PoolAction.REDUCE
+                        review.reason = f"退出 Top2（排名#{pool_rank}），适度减仓"
+                        review.suggested_qty_change = -int(qty * self.REDUCE_RATIO)
+                        review.suggested_reason = "退出 top2（盘中）"
+                    else:
+                        # 盘后：清仓
+                        review.action = PoolAction.CLOSE
+                        review.reason = f"退出 Top2（排名#{pool_rank}），触发平仓"
+                        review.suggested_qty_change = -qty
+                        review.suggested_reason = "退出 top2（盘后）"
             
             reviews.append(review)
             self.logger.info(f"  {symbol}: {review.action.value} - {review.reason}")
@@ -471,38 +506,42 @@ class UniverseSelector:
 # ============================================================
 
 def create_universe_selector() -> UniverseSelector:
-    """创建标的池选择器（从配置文件读取）"""
-    from config.config import load_config
-    
-    config = load_config()
-    
-    # 读取候选池 (WatchConfig.candidate_pool 是 list)
-    candidate_pool = config.watch.candidate_pool or []
-    
-    # 读取黑名单 (UniverseSelectorConfig.blacklist 是 list)
-    blacklist = set(config.universe_selector.blacklist or [])
-    
-    # 过滤黑名单
+    """创建标的池选择器（从 strong_accumulation.yaml 读取）
+
+    配置来源：strategy/templates/strong_accumulation.yaml
+    - candidate_pool: 初始候选池（scope=pool_only 使用，scope=full 后动态更新）
+    - blacklist: 永不纳入的标的
+    - 策略参数（capacity/max_positions/required_passing 等）
+    """
+    from config.config import load_strong_accumulation_config
+
+    sa_config = load_strong_accumulation_config()
+
+    # 候选池（过滤黑名单）
+    candidate_pool = sa_config.candidate_pool or []
+    blacklist = set(sa_config.blacklist or [])
     candidates = [s for s in candidate_pool if s not in blacklist]
-    
-    # 读取策略配置
-    cfg = config.universe_selector
-    
-    # 构建参数字典
+
+    # 构建参数字典（与 UniverseSelector.__init__ 期望格式一致）
     strategy_cfg = {
-        "required_passing": cfg.required_passing,
-        "min_score_threshold": cfg.min_score_threshold,
-        "max_positions": cfg.max_positions,
-        "min_positions": cfg.min_positions,
+        "required_passing": sa_config.required_passing,
+        "min_score_threshold": sa_config.min_score_threshold,
+        "max_positions": sa_config.max_positions,
+        "min_positions": sa_config.min_positions,
         "position_review": {
-            "take_profit_pct": cfg.take_profit_pct,
-            "stop_loss_pct": cfg.stop_loss_pct,
-            "reduce_ratio": cfg.reduce_ratio,
+            "take_profit_pct": sa_config.take_profit_pct,
+            "stop_loss_pct": sa_config.stop_loss_pct,
+            "reduce_ratio": sa_config.reduce_ratio,
         },
         "opening": {
-            "default_position_size_pct": cfg.default_position_size_pct,
-            "top_n": cfg.top_n,
+            "default_position_size_pct": sa_config.default_position_size_pct,
+            "top_n": sa_config.top_n,
         },
     }
-    
-    return UniverseSelector(candidate_symbols=candidates, config=strategy_cfg)
+
+    selector = UniverseSelector(candidate_symbols=candidates, config=strategy_cfg)
+
+    # 设置候选池容量（从配置读取）
+    selector.CAPACITY = sa_config.capacity
+
+    return selector

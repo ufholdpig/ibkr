@@ -108,7 +108,7 @@ class MarketDataProvider:
     def _fetch_historical_yfinance(self, symbol: str, days: int) -> List[Bar]:
         import yfinance as yf
         yf_sym = self._resolve_yfinance_symbol(symbol)
-        df = yf.download(yf_sym, period=f"{days}d", interval="1d", progress=False, auto_adjust=True)
+        df = yf.download(yf_sym, period=f"{days}d", interval="1d", progress=False, auto_adjust=True, timeout=10)
         if df.empty:
             logger.warning(f"yfinance [{symbol}] 下载历史数据为空")
             return []
@@ -256,6 +256,7 @@ class MarketDataProvider:
         ma_50 = self.compute_sma(closes, 50)
         ma_200 = self.compute_sma(closes, 200)
         volume_avg_20d = self.compute_sma(volumes, 20)
+        volume_avg_90d = self.compute_sma(volumes, 90) if len(volumes) >= 90 else None
 
         # Trend-following indicators
         ma_50_slope = self.compute_sma_slope(closes, 50, lookback=10)
@@ -279,10 +280,16 @@ class MarketDataProvider:
             ma_50_series = ma_50_series[-60:]
             consolidation_info = self.compute_consolidation(closes, ma_50_series)
 
-        # Volume ratio
+        # Volume ratio vs 20d average
         volume_ratio = None
         if volume_avg_20d and volume_avg_20d > 0 and volumes:
             volume_ratio = volumes[-1] / volume_avg_20d
+
+        # Volume ratio vs 90d average (5-day avg volume / 90d avg volume)
+        volume_ratio_90d = None
+        if volume_avg_90d and volume_avg_90d > 0:
+            avg_5d = sum(volumes[-5:]) / 5 if len(volumes) >= 5 else volumes[-1]
+            volume_ratio_90d = avg_5d / volume_avg_90d
 
         # Retrace to MA50 detection
         retrace_to_ma50 = None
@@ -304,6 +311,8 @@ class MarketDataProvider:
             "ma_200": ma_200,
             "rsi_14": self.compute_rsi(closes, 14),
             "volume_avg_20d": volume_avg_20d,
+            "volume_avg_90d": volume_avg_90d,
+            "volume_ratio_90d": volume_ratio_90d,
             "change_1d_pct": change_1d,
             "change_5d_pct": change_5d,
             "change_20d_pct": change_20d,

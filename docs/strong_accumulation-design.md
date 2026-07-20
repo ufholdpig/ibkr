@@ -203,25 +203,32 @@
 
 ### 4.1 核心设计原则
 
-> **执行时机决定评估范围**
+> **执行时机决定评估范围，信号生成职责按时间分离**
 
-| 时间窗口 | 评估范围 | 理由 |
-|---------|---------|------|
-| 盘前（<9:30） | 全部 ~350 标的 | 开盘前充裕时间，可做完整扫描 |
-| 盘中（9:30-16:00） | 仅池内标的 | 避免在交易活跃时段浪费资源 |
-| 盘后（≥16:00） | 全部 ~350 标的 | 时间充裕，资源开销无限制 |
+|| 时间窗口 | scope | 评估范围 | 信号生成 | 职责 |
+|---------|-------|---------|---------|---------|
+|| 盘前（<9:30 ET） | full | 全部24只板块龙头股 | ✅ → signals_pre_market | 扫描+刷新top10+信号 |
+|| 盘中（9:30-16:00 ET） | pool_only | 候选池(top10) | ❌ | 仅评估，WatchDaemon负责信号 |
+|| 盘后（≥16:00 ET） | full | 全部24只板块龙头股 | ✅ → signals_pre_market | 扫描+刷新top10+信号 |
+
+**信号职责划分（关键）**：
+- `universe-refresh scope=full`：盘后批量扫描 → 刷新top10 → 生成持仓管理信号(BUY/SELL) → T+1执行
+- `universe-refresh scope=pool_only`：仅评估池内标的(re-rank)，不生成信号，报告仅供观察
+- `WatchDaemon`（盘中wake模式）：实时监控 `templates.strong_accumulation` → conditions评估 → signals_intra_day → 当日执行
 
 ### 4.2 两部分刷新动作
 
-| 刷新部分 | 说明 | 执行条件 |
-|---------|------|---------|
-| **池内标的再审核 (type-a)** | 对当前候选池内标的重新打分 | 始终执行（无论何时调用） |
-| **池外标的评估 (type-b)** | 对~350全量标的做完整评估 | 仅盘前/盘后执行 |
+|| 刷新部分 | 说明 | 执行条件 | 信号生成 |
+|---------|------|---------|---------|
+|| **池内标的再审核 (type-a)** | 对当前候选池内标的重新打分 | 始终执行 | ❌（仅报告） |
+|| **池外标的评估 (type-b)** | 对全部24只板块龙头股做完整评估 | 仅 scope=full（盘前/盘后） | ✅ → signals_pre_market |
+
+**scope=full 与 scope=pool_only 的本质区别**：前者发现新标的并刷新top10，后者仅在已有池内re-rank。
 
 **资源开销预估**：
 
-- 池内标的（25只）：~25 次 API 请求，约 30 秒
-- 全量标的（350只）：~350 次 API 请求，约 5-10 分钟
+- 候选池标的（top10）：~10 次 API 请求，约 15 秒
+- 全量板块龙头（24只）：~24 次 API 请求，约 30-60 秒
 
 ### 4.3 实现逻辑
 
@@ -230,10 +237,12 @@ def determine_scope() -> str:
     """根据执行时间决定评估范围"""
     et = get_current_et_time()
     if et.hour < 9 or et.hour >= 16:
-        return "full"      # 盘前/盘后：全量评估
+        return "full"       # 盘前/盘后：全量扫描24只板块龙头股 + 生成信号
     else:
-        return "pool_only" # 盘中：仅池内标的
+        return "pool_only" # 盘中：仅扫描候选池(top10) + 不生成信号
 ```
+
+> **注意**：scope=pool_only 时 WatchDaemon 全权负责盘中信号生成，两者时间上互斥（WatchDaemon sleep 时才执行 universe-refresh）
 
 ---
 
@@ -242,9 +251,9 @@ def determine_scope() -> str:
 ### 5.1 整体流程
 
 ```
-universe-refresh（盘后 18:00+）
+universe-refresh scope=full（盘前/盘后 ≥16:00 或 <9:30 ET）
     │
-    ├─ 确定评估范围（全量或仅池内）
+    ├─ 确定评估范围：扫描全部24只板块龙头股
     │
     ├─ 获取市场数据
     │
@@ -252,7 +261,7 @@ universe-refresh（盘后 18:00+）
     │
     ├─ 决定 PoolAction（8种）
     │
-    ├─ 写入信号（仅非 HOLD action）
+    ├─ 写入信号（仅非 HOLD action，scope=full 时）
     │       │
     │       └─ 复用 watch_daemon 链路
     │           ├─ 写入 signal_{YYYYMMDD_next}.json
@@ -264,7 +273,31 @@ universe-refresh（盘后 18:00+）
     │               ├─ 提交至 IBKR（pre-submit 状态）
     │               └─ 标记 processed=true
     │
-    └─ IBKR 持有订单，9:30am EST 自动成交
+    └─ IBKR 持有订单，9:30am EST 自动成交（T+1）
+
+universe-refresh scope=pool_only（盘中 9:30-16:00 ET）
+    │
+    ├─ 确定评估范围：仅扫描候选池(top10)
+    │
+    ├─ 获取市场数据
+    │
+    ├─ 评估候选标的，生成 PositionReview[]
+    │
+    └─ 仅输出报告，不生成信号
+        （WatchDaemon 全权负责盘中 signals_intra_day）
+
+WatchDaemon（盘中 wake 模式）
+    │
+    ├─ 监控 templates.strong_accumulation (top10)
+    │
+    ├─ StrategyFactory 评估 strong_accumulation.yaml conditions
+    │       （7个技术面，满足≥4个）
+    │
+    ├─ 条件满足 → 写入 signals_intra_day
+    │       └─ 调用 intra_day.execute()
+    │           ├─ 读取 signals_intra_day[]
+    │           ├─ process_signals() → 订单
+    │           └─ 提交至 IBKR（当日执行）
 ```
 
 ### 5.2 8种持仓决策映射
@@ -497,36 +530,180 @@ def get_execution_scope() -> str:
 
 ---
 
-## 十一、TODO
+## 十一、Top2 决策框架（2026-07-19 新增）
 
-- [ ] **ibclient universe-refresh 命令** — 写入 signal JSON + 触发 execute()（当前实现阶段）
-- [ ] **post-market 集成** — 在盘后报告生成流程中调用 UniverseSelector
-- [ ] **watch daemon 整合** — 盘中（9:30-16:00）执行时，仅对池内标的再审核（type-a）
-- [ ] **回测验证** — 历史数据回测验证策略有效性
-- [ ] **实盘部署** — Paper Trading 验证后小资金实盘
+### 11.1 核心理念
+
+> **排名本身就是信号**：不跨标的比较得分，只看 top2 的变化。
+
+- 候选池按评分排序后，**top2** 是最关键的决策依据
+- top2 变化 → 信号生成
+- top2 不变 → 持仓稳定
+
+### 11.2 盘中 vs 盘后执行
+
+| 维度 | 盘中（Intra-day） | 盘后（Post-market） |
+|------|------------------|-------------------|
+| 执行时机 | 9:30-16:00 | 16:00 后 |
+| 评估范围 | 仅池内标的 | 全量 ~350 标的 |
+| 标的增删 | **不增删**（固定池） | **增删**（取 top N） |
+| 可能信号 | hold / reduce / add / close | buy / add / hold / reduce / close |
+
+### 11.3 盘中决策逻辑
+
+```
+old_top2 = 旧 ibkr.yaml 的前2名
+new_top2 = 新排序后的前2名
+
+对于持仓标的：
+    if symbol in new_top2:
+        if symbol in old_top2:
+            → HOLD（top2 内，排名稳定）
+        else:
+            → ADD（新入 top2，排名上升）
+    else:
+        → REDUCE（退出 top2，排名下降）
+        （极端反转：三振出局 → CLOSE）
+```
+
+### 11.4 盘后决策逻辑
+
+```
+old_top2 = 旧 ibkr.yaml 的前2名
+new_top2 = 新排序后的前2名
+
+对于持仓标的：
+    if symbol in new_top2:
+        if symbol in old_top2:
+            → HOLD
+        else:
+            → ADD（新入 top2）
+    else:
+        → CLOSE（被踢出新池）
+
+对于无持仓标的：
+    if symbol in new_top2:
+        if new_top2[0] == symbol or new_top2[1] == symbol:
+            → BUY（top2 标的建仓）
+        else:
+            → 无（不在 top2，不建仓）
+    else:
+        → 无
+```
+
+### 11.5 信号类型
+
+|| 信号 | 说明 | 适用场景 |
+|---|------|------|---------|
+| **buy** | 建仓 | 无持仓 + 新入 top2 |
+| **add** | 加仓 | 有持仓 + 新入 top2 |
+| **hold** | 持有 | top2 内且无变化 |
+| **reduce** | 减仓 | 退出 top2（盘中） |
+| **close** | 清仓 | 退出 top2（盘后）/ 三振出局 |
+
+### 11.6 候选池容量
+
+```yaml
+candidate_pool:
+  capacity: 10    # 盘后刷新后保留 top N
+```
+
+- 盘后执行：评估全量 → 取 top N → 更新 ibkr.yaml
+- 盘中执行：不增删标的，只调整排名
+
+### 11.7 信号去重机制
+
+#### 11.7.1 核心原则
+
+> **daily-based**："已经做过的就是做了，向前看，明天是新起点"
+> **同一标的 + 同一策略（strategy_id）+ 同一交易日 = 最多一条订单**
+
+#### 11.7.2 去重规则
+
+**在写入新信号前，检查对应交易日 order.json：**
+
+| order 状态 | 新信号动作 |
+|-----------|-----------|
+| SUBMITTED / FILLED | **跳过**（IBKR 已在处理或已成交，不重复） |
+| FAILED / CANCELLED | **允许**（IBKR 未接受，可重试） |
+| 无对应 order 记录 | **允许**（首次生成） |
+
+**判断维度**：`同一标的 + 同一 strategy_id + 同一交易日`
+
+#### 11.7.3 覆盖场景
+
+| 场景 | 说明 | 处理 |
+|------|------|------|
+| 一天内多次运行 | 每次 run 都检查 order.json | SUBMITTED/FILLED 跳过 |
+| 盘中再次评估 | 连接 IBKR → `on_order_status` 自动回填 FILLED | 发现 FILLED 跳过 |
+| 盘后首次运行 | T+1 order.json 不存在 | 直接写入（无去重） |
+| 盘后第二次运行 | T+1 order.json 已有 FILLED | 跳过 |
+
+**BUY 和 SELL 共用同一条去重规则。** SUBMITTED/FILLED 说明当时 IBKR 已接受该信号，无需重复。
+
+#### 11.7.4 为什么用 order.json 而非 signal.json 做去重
+
+| 文件 | 作用 | 去重依据 |
+|------|------|---------|
+| signal.json | 信号生成记录，不区分 pending/processed | ❌ 不适合 |
+| order.json | 信号执行记录，含 status + signal metadata，IBKR 连接时自动回填 FILLED | ✅ 唯一依据 |
+
+#### 11.7.5 signal → order 流程
+
+```
+策略引擎生成信号
+    ↓
+signal_YYYYMMDD.json（立即写入）
+    ↓
+watch daemon 监听到新信号 → 去重检查 order.json
+    ↓
+通过 → order_YYYYMMDD.json（立即写入 + 提交 IBKR）
+    ↓
+IBKR 回填状态（SUBMITTED → FILLED / FAILED）
+```
 
 ---
 
-## 十二、实现状态
+## 十二、TODO（更新）
+
+- [x] **Top2 决策框架** — 用 top2 替代 score 阈值对比（2026-07-19）
+- [x] **盘中/盘后执行区分** — scope 参数区分两种模式（2026-07-19）
+- [ ] **ibclient universe-refresh 命令** — 写入 signal JSON + 触发 execute()
+- [ ] **post-market 集成** — 在盘后报告生成流程中调用 UniverseSelector
+- [ ] **ibkr.yaml 动态更新** — 盘后刷新后更新 top N
+- [ ] **持仓预检** — 提交订单前检查 live 持仓（real account 风控）
+- [ ] **去重机制** — 同标的同天同来源幂等写入
+- [ ] **watch daemon 整合** — 盘中执行时重新读取 ibkr.yaml
+
+---
+
+## 十三、实现状态（更新）
 
 ### 已完成
 
-| 模块 | 文件 | 状态 |
+|| 模块 | 文件 | 状态 |
 |------|------|------|
-| UniverseSelector | `src/trading/universe_selector.py` | ✅ 已完成 |
+| UniverseSelector | `src/trading/universe_selector.py` | ✅ 已完成（top2 框架） |
 | WatchlistManager | `src/core/watchlist_manager.py` | ✅ 已完成 |
 | 配置集成 | `config/ibkr.yaml` + `config/config.py` | ✅ 已完成 |
-| ibclient 命令框架 | `skills/ibclient-all-in-one/ibclient.py` | ⚠️ 部分完成（待信号写入） |
+| ibclient 命令框架 | `skills/ibclient-all-in-one/ibclient.py` | ⚠️ 部分完成 |
+
+### 进行中
+
+|| 模块 | 说明 | 状态 |
+|------|------|------|
+| Top2 决策逻辑 | `universe_selector.py` | 代码重构中 |
+| ibkr.yaml capacity | `config/ibkr.yaml` | 待添加 |
 
 ### 待实现
 
-| 模块 | 说明 | 优先级 |
-|------|------|--------|
-| `cmd_universe_refresh` 信号写入 | 追加信号到 signal JSON + 触发 execute() | 🔴 高 |
-| post-market 集成 | 盘后报告生成时调用 UniverseSelector | 🟡 中 |
-| watch daemon 整合 | 盘中执行时仅池内标的 | 🟢 低 |
+|| 模块 | 说明 | 优先级 |
+|------|------|------|--------|
+| 去重机制 | signal 写入前检查 | 🔴 高 |
+| ibkr.yaml 动态更新 | 盘后刷新后更新 top N | 🔴 高 |
+| 持仓预检 | 订单提交前 live 持仓检查 | 🔴 高 |
+| watch daemon reload | 每次处理信号前重新读取 ibkr.yaml | 🟡 中 |
 
 ---
 
-**文档版本**: v1.1  
-**下次更新**: ibclient universe-refresh 命令完成后
+**文档版本**: v1.2（Top2 决策框架，2026-07-19）

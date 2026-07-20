@@ -30,7 +30,7 @@ class WatchConfig:
 
     templates: {template_name: [symbols]} — 每个模版绑定适用的标的列表
     cooldown_minutes: {symbol: minutes, "default": minutes} — 标的冷却时间
-    candidate_pool: [symbols] — 候选池（由 UniverseSelector 使用）
+    strong_accumulation: StrongAccumulationConfig — 强势股蓄力池配置
     """
     templates: dict = field(default_factory=dict)
     cooldown_minutes: dict = field(default_factory=lambda: {"default": 20})
@@ -38,11 +38,11 @@ class WatchConfig:
     indicator_refresh_minutes: int = 30
     template_dir: str = "strategy/templates"
     real_cooldown_multiplier: float = 4.0
-    candidate_pool: list = field(default_factory=list)
+    strong_accumulation: Optional[StrongAccumulationConfig] = None
 
     @property
     def symbol_list(self) -> list[str]:
-        """从所有模版绑定中推导唯一标的列表"""
+        """从所有模版绑定推导唯一标的列表"""
         symbols = set()
         for syms in self.templates.values():
             symbols.update(syms)
@@ -71,6 +71,7 @@ class RiskConfig:
 class UniverseSelectorConfig:
     """候选池选择器配置"""
     enabled: bool = True
+    capacity: int = 10               # 盘后刷新后保留 top N
     max_positions: int = 2
     min_positions: int = 1
     required_passing: int = 4
@@ -84,6 +85,152 @@ class UniverseSelectorConfig:
     # 建仓参数
     default_position_size_pct: float = 10.0
     top_n: int = 3
+
+
+@dataclass
+class StrongAccumulationConfig:
+    """Strong Accumulation 策略配置 — 从 strategy/templates/strong_accumulation.yaml 加载
+
+    sectors: 全量扫描范围（scope=full 时使用）
+    candidate_pool: top 10 候选池（scope=pool_only 使用，scope=full 后动态更新）
+    universe_selector: 策略参数（从 ibkr.yaml universe_selector 节迁移）
+    """
+    # sectors: {sector_name: {name: str, leaders: [str]}}
+    sectors: dict = field(default_factory=dict)
+    candidate_pool: list = field(default_factory=list)
+
+    # 策略参数
+    capacity: int = 10
+    max_positions: int = 2
+    min_positions: int = 1
+    required_passing: int = 4
+    min_score_threshold: float = 4.0
+    take_profit_pct: float = 20.0
+    stop_loss_pct: float = -10.0
+    reduce_ratio: float = 0.5
+    blacklist: list = field(default_factory=list)
+    default_position_size_pct: float = 10.0
+    top_n: int = 3
+
+    @property
+    def all_sector_leaders(self) -> list[str]:
+        """从所有 sectors 提取所有龙头股（去重）"""
+        symbols = []
+        seen = set()
+        for sector_cfg in self.sectors.values():
+            for sym in sector_cfg.get("leaders", []):
+                if sym not in seen:
+                    symbols.append(sym)
+                    seen.add(sym)
+        return symbols
+
+    def get_candidate_pool_for_scope(self, scope: str) -> list[str]:
+        """根据 scope 返回标的列表
+
+        scope=full: 返回全量 sectors（所有板块龙头）
+        scope=pool_only: 返回 candidate_pool
+        """
+        if scope == "full":
+            return self.all_sector_leaders
+        return self.candidate_pool
+
+    def update_candidate_pool(self, top_symbols: list[str]):
+        """更新 candidate_pool（scope=full 后调用）"""
+        self.candidate_pool = top_symbols
+
+    def to_template_dict(self) -> dict:
+        """导出为模板 dict（用于写回 YAML）"""
+        return {
+            "strategy_id": "strong_accumulation",
+            "name": "强势股蓄力池",
+            "description": "基于板块龙头扫描的强势股候选池，每日盘后动态更新 top 10",
+            "sectors": self.sectors,
+            "candidate_pool": self.candidate_pool,
+            "universe_selector": {
+                "capacity": self.capacity,
+                "max_positions": self.max_positions,
+                "min_positions": self.min_positions,
+                "required_passing": self.required_passing,
+                "min_score_threshold": self.min_score_threshold,
+                "position_review": {
+                    "take_profit_pct": self.take_profit_pct,
+                    "stop_loss_pct": self.stop_loss_pct,
+                    "reduce_ratio": self.reduce_ratio,
+                },
+                "blacklist": self.blacklist,
+                "opening": {
+                    "default_position_size_pct": self.default_position_size_pct,
+                    "top_n": self.top_n,
+                },
+            },
+        }
+
+
+_STRONG_ACC_CONFIG_CACHE: Optional[StrongAccumulationConfig] = None
+
+
+def load_strong_accumulation_config() -> StrongAccumulationConfig:
+    """加载 StrongAccumulation 配置（带缓存）"""
+    global _STRONG_ACC_CONFIG_CACHE
+    if _STRONG_ACC_CONFIG_CACHE is not None:
+        return _STRONG_ACC_CONFIG_CACHE
+
+    from pathlib import Path
+    project_root = Path(__file__).parent.parent
+    template_path = project_root / "strategy" / "templates" / "strong_accumulation.yaml"
+
+    if not template_path.exists():
+        _STRONG_ACC_CONFIG_CACHE = StrongAccumulationConfig()
+        return _STRONG_ACC_CONFIG_CACHE
+
+    with open(template_path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+
+    univ = data.get("universe_selector", {})
+    pos_rev = univ.get("position_review", {})
+    opening = univ.get("opening", {})
+
+    cfg = StrongAccumulationConfig(
+        sectors=data.get("sectors", {}),
+        candidate_pool=data.get("candidate_pool", []),
+        capacity=univ.get("capacity", 10),
+        max_positions=univ.get("max_positions", 2),
+        min_positions=univ.get("min_positions", 1),
+        required_passing=univ.get("required_passing", 4),
+        min_score_threshold=univ.get("min_score_threshold", 4.0),
+        take_profit_pct=pos_rev.get("take_profit_pct", 20.0),
+        stop_loss_pct=pos_rev.get("stop_loss_pct", -10.0),
+        reduce_ratio=pos_rev.get("reduce_ratio", 0.5),
+        blacklist=univ.get("blacklist", []),
+        default_position_size_pct=opening.get("default_position_size_pct", 10.0),
+        top_n=opening.get("top_n", 3),
+    )
+
+    _STRONG_ACC_CONFIG_CACHE = cfg
+    return cfg
+
+
+def save_strong_accumulation_config(cfg: StrongAccumulationConfig):
+    """保存 StrongAccumulation 配置到 YAML 文件（scope=full 后写回 top 10）"""
+    from pathlib import Path
+    import datetime
+    project_root = Path(__file__).parent.parent
+    template_path = project_root / "strategy" / "templates" / "strong_accumulation.yaml"
+
+    with open(template_path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+
+    # 更新 candidate_pool
+    data["candidate_pool"] = cfg.candidate_pool
+    # 更新时间戳
+    data["_last_refresh"] = datetime.datetime.now().isoformat()
+
+    with open(template_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
+
+    # 清除缓存
+    global _STRONG_ACC_CONFIG_CACHE
+    _STRONG_ACC_CONFIG_CACHE = None
 
 
 @dataclass
@@ -213,6 +360,9 @@ class IBKRConfig:
             retry_delay=int(os.getenv("IBKR_RETRY_DELAY", gateway_data.get("retry_delay", 2))),
             account_id=account_id,
         )
+        # 加载候选池选择器配置（从 strong_accumulation.yaml）
+        strong_acc_cfg = load_strong_accumulation_config()
+
         # 加载 watch 守护进程配置
         watch_data = ibkr_data.get("watch", {})
         templates_raw = watch_data.get("templates", {})
@@ -225,7 +375,7 @@ class IBKRConfig:
             indicator_refresh_minutes=watch_data.get("indicator_refresh_minutes", 30),
             template_dir=watch_data.get("template_dir", "strategy/templates"),
             real_cooldown_multiplier=watch_data.get("real_cooldown_multiplier", 4.0),
-            candidate_pool=watch_data.get("candidate_pool", []),
+            strong_accumulation=strong_acc_cfg,
         )
         
         # 加载风控引擎配置
@@ -238,20 +388,21 @@ class IBKRConfig:
             tfsa_limitation=risk_data.get("tfsa_limitation", True),
         )
 
-        # 加载候选池选择器配置
-        universe_data = ibkr_data.get("universe_selector", {})
+        # 候选池选择器配置（从 strong_accumulation.yaml 迁移）
+        # ibkr.yaml 中 universe_selector 节已废弃，参数统一从 strong_accumulation.yaml 读取
         universe_selector = UniverseSelectorConfig(
-            enabled=universe_data.get("enabled", True),
-            max_positions=universe_data.get("max_positions", 2),
-            min_positions=universe_data.get("min_positions", 1),
-            required_passing=universe_data.get("required_passing", 4),
-            min_score_threshold=universe_data.get("min_score_threshold", 4.0),
-            take_profit_pct=universe_data.get("position_review", {}).get("take_profit_pct", 20.0),
-            stop_loss_pct=universe_data.get("position_review", {}).get("stop_loss_pct", -10.0),
-            reduce_ratio=universe_data.get("position_review", {}).get("reduce_ratio", 0.5),
-            blacklist=universe_data.get("blacklist", []),
-            default_position_size_pct=universe_data.get("opening", {}).get("default_position_size_pct", 10.0),
-            top_n=universe_data.get("opening", {}).get("top_n", 3),
+            enabled=True,
+            capacity=strong_acc_cfg.capacity,
+            max_positions=strong_acc_cfg.max_positions,
+            min_positions=strong_acc_cfg.min_positions,
+            required_passing=strong_acc_cfg.required_passing,
+            min_score_threshold=strong_acc_cfg.min_score_threshold,
+            take_profit_pct=strong_acc_cfg.take_profit_pct,
+            stop_loss_pct=strong_acc_cfg.stop_loss_pct,
+            reduce_ratio=strong_acc_cfg.reduce_ratio,
+            blacklist=strong_acc_cfg.blacklist,
+            default_position_size_pct=strong_acc_cfg.default_position_size_pct,
+            top_n=strong_acc_cfg.top_n,
         )
 
         return cls(market_data_source=market_data_source, approval_required=approval_required,

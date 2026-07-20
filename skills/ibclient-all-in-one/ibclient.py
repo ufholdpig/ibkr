@@ -311,27 +311,54 @@ def cmd_universe_refresh(args):
         symbols = list(selector.candidate_symbols)
 
         if not symbols:
-            logger.info("❌ 候选池为空，请检查 config candidate_pool 配置")
+            logger.info("❌ 候选池为空，请先执行 universe-refresh (scope=full) 扫描板块龙头股填充 top10")
             return 1
 
-        # 根据执行时间决定评估范围（盘中仅池内，盘前/后全量）
+        # 根据 NYSE 日历判断当前是否在交易时段（9:30-16:00 ET）
+        # 盘中（NYSE开市）→ pool_only；盘前/盘后/周末/假日 → full（全量刷新）
+        from datetime import datetime
         from src.core.paths import get_current_et_time
         from src.core.market_data import MarketDataProvider
         from src.core.strategy import MarketData
+        import exchange_calendars as xc
 
         et = get_current_et_time()
-        execution_scope = "full" if (et.hour < 9 or et.hour >= 16) else "pool_only"
+        try:
+            nyse = xc.get_calendar("XNYS")
+            is_market_open = bool(nyse.is_open_on_minute(et))
+        except Exception:
+            is_market_open = False  # 降级：无法确定时默认 full
+        execution_scope = "pool_only" if is_market_open else "full"
+
+        # 全量刷新时扫描所有板块龙头股（sectors），盘中只扫描候选池（candidate_pool）
+        if execution_scope == "full":
+            from config.config import load_strong_accumulation_config
+            sa_cfg = load_strong_accumulation_config()
+            symbols = sa_cfg.get_candidate_pool_for_scope("full")
+            symbols = [s for s in symbols if s not in set(config.universe_selector.blacklist or [])]
+        else:
+            # scope=pool_only: 盘中仅扫描候选池
+            from config.config import load_strong_accumulation_config
+            sa_cfg = load_strong_accumulation_config()
+            symbols = sa_cfg.get_candidate_pool_for_scope("pool_only")
+            if not symbols:
+                logger.info("⏭ scope=pool_only，候选池为空，跳过盘中刷新（请先执行 scope=full 填充 top10）")
+                return 0
         logger.info(f"📊 获取 {len(symbols)} 只候选标的的市场数据... [scope={execution_scope}]")
 
         # 使用 MarketDataProvider（有 yfinance fallback）获取历史数据并计算技术指标
         data_source = getattr(config, 'market_data_source', 'yfinance')
         provider = MarketDataProvider(client, data_source=data_source)
         market_data_map: Dict[str, MarketData] = {}
+        failed = []
 
-        for sym in symbols:
+        for i, sym in enumerate(symbols):
             bars = provider.fetch_historical(sym, days=250)
             if not bars or len(bars) < 60:
-                logger.warning(f"  ⚠️ {sym}: 历史数据不足（{len(bars) if bars else 0} bars），跳过")
+                msg = f"[{i+1}/{len(symbols)}] ⚠️ {sym}: 历史数据不足（{len(bars) if bars else 0} bars），跳过"
+                logger.debug(msg)  # 次要信息 → audit.log
+                logger.warning(msg)
+                failed.append(sym)
                 continue
             ind = provider.compute_indicators(bars)
             md = MarketData(
@@ -343,6 +370,7 @@ def cmd_universe_refresh(args):
                 **ind
             )
             market_data_map[sym] = md
+            logger.debug(f"[{i+1}/{len(symbols)}] ✅ {sym}: ${bars[-1].close:.2f}")  # 次要信息 → audit.log
 
         if not market_data_map:
             logger.info("❌ 所有候选标的均无有效数据")
@@ -351,10 +379,39 @@ def cmd_universe_refresh(args):
 
         logger.info(f"✅ 获取 {len(market_data_map)} 只标的的技术指标")
 
+        logger.info(f"🔄 刷新候选池（top {selector.CAPACITY}），market_data_map 大小: {len(market_data_map)}")
         # 刷新候选池
         selector.refresh(market_data_map)
+        logger.info(f"✅ 候选池刷新完成")
 
-        # 获取持仓
+        # ============================================================
+        # scope=full 后写回 top 10（同时更新两个配置文件）
+        # ============================================================
+        if execution_scope == "full" and selector.candidates:
+            top_symbols = [c.symbol for c in selector.candidates[:selector.CAPACITY]]
+            logger.info(f"📝 scope=full 写回 top {len(top_symbols)}: {top_symbols}")
+
+            # 1. 更新 strong_accumulation.yaml candidate_pool
+            from config.config import (load_strong_accumulation_config,
+                                       save_strong_accumulation_config)
+            sa_cfg = load_strong_accumulation_config()
+            sa_cfg.update_candidate_pool(top_symbols)
+            save_strong_accumulation_config(sa_cfg)
+            logger.info(f"✅ 已写回 strong_accumulation.yaml candidate_pool")
+
+            # 2. 同步 ibkr.yaml watch.templates.strong_accumulation
+            import yaml
+            from pathlib import Path
+            project_root = Path(__file__).resolve().parent.parent.parent
+            ibkr_path = project_root / "config" / "ibkr.yaml"
+            with open(ibkr_path, "r", encoding="utf-8") as f:
+                ibkr_data = yaml.safe_load(f) or {}
+            ibkr_data.setdefault("ibkr", {}).setdefault("watch", {}).setdefault("templates", {})["strong_accumulation"] = top_symbols
+            with open(ibkr_path, "w", encoding="utf-8") as f:
+                yaml.safe_dump(ibkr_data, f, allow_unicode=True, sort_keys=False)
+            logger.info(f"✅ 已同步 ibkr.yaml watch.templates.strong_accumulation")
+
+        logger.info(f"📋 获取持仓信息...")
         account_info = client.get_account_info(timeout=30)
         positions = [
             {
@@ -402,6 +459,20 @@ def cmd_universe_refresh(args):
         if report.opening_suggestions:
             logger.info(f"   建仓建议: {[c.symbol for c in report.opening_suggestions]}")
 
+        # scope=pool_only（盘中）：仅评估，不生成信号
+        # 盘中 WatchDaemon 全权负责 signals_intra_day 链路
+        if execution_scope == "pool_only":
+            logger.info("ℹ️ scope=pool_only，仅评估候选池（不生成信号，由 WatchDaemon 负责盘中信号）")
+            logger.info(f"   候选池: {report.candidate_count} 只通过评审")
+            if report.candidate_pool:
+                logger.info("   TOP5 标的:")
+                for i, c in enumerate(report.candidate_pool[:5], 1):
+                    logger.info(f"     #{i} {c.symbol}: score={c.score:.1f}, pass={c.passing_count}/7")
+            client.disconnect()
+            logger.info("✅ universe-refresh 完成")
+            return 0
+
+        # scope=full（盘后）：评估 + 生成信号 + 写 signals_pre_market
         if report.actions_summary:
             summary_str = ", ".join(f"{k}:{v}" for k, v in report.actions_summary.items())
             logger.info(f"   动作汇总: {summary_str}")
@@ -426,31 +497,66 @@ def cmd_universe_refresh(args):
             })
 
         if signals_to_write:
+            # ========== 去重检查：查 order.json ========
+            # signals 写入 T+1 的 order 文件（如 07/19 运行 → order_20260720.json）
+            from src.core.paths import get_order_file
+            order_file = get_order_file()  # 获取当日 order 文件路径
+            duplicate_count = 0
+            signals_after_dedup = []
+            for sig in signals_to_write:
+                sym = sig["symbol"]
+                strat = sig["strategy_id"]
+                # 检查 order 文件中是否已有 SUBMITTED/FILLED 的同标的同策略订单
+                dup = False
+                if order_file.exists():
+                    with open(order_file, "r", encoding="utf-8") as f:
+                        order_data = json.load(f)
+                    for section_orders in order_data.values():
+                        if not isinstance(section_orders, list):
+                            continue
+                        for o in section_orders:
+                            o_sig = o.get("signal", {})
+                            if (o_sig.get("symbol") == sym
+                                    and o_sig.get("strategy_id") == strat
+                                    and o.get("status") in ("SUBMITTED", "FILLED")):
+                                dup = True
+                                break
+                        if dup:
+                            break
+                if dup:
+                    logger.info(f"  ⏭️ 跳过重复信号: {sym} ({strat})，已有 SUBMITTED/FILLED 订单")
+                    duplicate_count += 1
+                else:
+                    signals_after_dedup.append(sig)
+            if not signals_after_dedup:
+                logger.info("ℹ️  所有信号均为重复，跳过写入")
+                client.disconnect()
+                logger.info("✅ universe-refresh 完成")
+                return 0
+            logger.info(f"✅ 去重完成：{len(signals_to_write)} → {len(signals_after_dedup)}（过滤 {duplicate_count} 个重复）")
+            # ========== 去重检查结束 ==========
+
             # 写入信号文件
             et = get_current_et_time()
-            before_open = et.hour < 9 or (et.hour == 9 and et.minute < 30)
-            after_close = et.hour >= 16
-            section = "signals_pre_market" if (before_open or after_close) else "signals_intra_day"
+            # universe-refresh 是盘后操作，信号始终写入 signals_pre_market，等待次日盘前执行
+            section = "signals_pre_market"
 
             generator = SignalGenerator()
             signal_data = generator._load_signal_file()
-            for sd in signals_to_write:
-                signal_data.setdefault(section, []).append(sd)
+            # 替换 signals_pre_market 而非追加，防止重复执行导致信号累积
+            signal_data[section] = list(signals_after_dedup)
             generator._save_signal_file(signal_data)
 
-            logger.info(f"✅ 写入 {len(signals_to_write)} 个信号到 {section}，触发 execute()")
+            logger.info(f"✅ 写入 {len(signals_after_dedup)} 个信号到 {section}，触发 execute()")
 
-            # 触发 execute（复用 watch_daemon 链路）
-            if before_open or after_close:
-                from src.trading.pre_market import execute as premkt_exec
-                premkt_exec()
-            else:
-                from src.trading.intra_day import execute as intra_exec
-                intra_exec()
+            # 触发 execute（复用 watch_daemon 链路）— 始终走盘前通道
+            from src.trading.pre_market import execute as premkt_exec
+            premkt_exec()
         else:
             logger.info("ℹ️  无需执行的信号（全部 HOLD/SKIP）")
 
         client.disconnect()
+        logger.info("✅ universe-refresh 完成")
         return 0
 
     except Exception as e:
