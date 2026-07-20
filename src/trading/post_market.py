@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import Dict, List
 from src.core.client import IBKRClient
+from src.core.market_data import MarketDataProvider
 from src.core.models import Execution
 from src.core.logger import get_logger
 from src.core.account import get_managed_account
@@ -88,6 +89,7 @@ class PostMarketExecutor:
         try:
             config = load_config()
             self.client = IBKRClient(config)
+            self.market_data_source = config.market_data_source
             result = self.client.connect()
             if not result.success:
                 raise Exception(f"❌ 连接失败: {result.error_message}")
@@ -145,35 +147,49 @@ class PostMarketExecutor:
             return []
 
     def _get_positions_from_ibkr(self, timeout: int = 30) -> List[Dict]:
-        """从 IBKR 获取当前持仓"""
+        """从 IBKR 获取当前持仓（含实时市值）
+
+        持仓基础数据（quantity, avg_cost）来自 IBKR position 回调，
+        实时价格通过 MarketDataProvider 获取（支持 auto/ibkr/yfinance 配置），
+        市值和未实现盈亏在本地计算。
+        """
         if not self.client or not self.client.is_connected():
             logger.warning("客户端未连接，无法获取持仓")
             return []
 
         try:
-            logger.info(
-                f"📊 请求 IBKR 账户信息 (account_id={self.account_id}, timeout={timeout})..."
-            )
+            logger.info(f"📊 请求 IBKR 持仓 (account_id={self.account_id}, source={self.market_data_source})...")
             account_info = self.client.get_account_info(timeout=timeout)
-
             if not account_info.positions:
                 logger.warning("⚠️ 账户信息中无持仓数据")
                 return []
 
-            positions = account_info.positions
-            logger.info(f"📊 从 IBKR 获取到 {len(positions)} 个持仓")
-            return [
-                {
-                    "symbol": p.symbol,
-                    "quantity": p.quantity,
-                    "market_value": p.market_value,
-                    "average_cost": p.average_cost,
-                    "unrealized_pnl": p.unrealized_pnl,
-                }
-                for p in positions
-            ]
+            positions = account_info.positions  # List[Position]
+            logger.info(f"📊 获取 {len(positions)} 个持仓，开始获取实时价格...")
+
+            # 通过 MarketDataProvider 获取实时价格（支持 auto/ibkr/yfinance 配置）
+            mdp = MarketDataProvider(self.client, data_source=self.market_data_source)
+            symbols = [p.symbol for p in positions]
+            market_data = mdp.fetch_basic(symbols)  # {symbol: MarketData}
+
+            result = []
+            for pos in positions:
+                md = market_data.get(pos.symbol)
+                price = md.price if md else 0.0
+                market_value = abs(pos.quantity * price) if price > 0 else 0.0
+                unrealized_pnl = (price - pos.average_cost) * pos.quantity if price > 0 else 0.0
+                result.append({
+                    "symbol": pos.symbol,
+                    "quantity": pos.quantity,
+                    "market_value": market_value,
+                    "average_cost": pos.average_cost,
+                    "unrealized_pnl": unrealized_pnl,
+                })
+
+            logger.info(f"📊 持仓市值计算完成（{self.market_data_source}）")
+            return result
         except Exception as e:
-            logger.error(f"❌ 获取持仓失败: {e}")
+            logger.error(f"❌ 持仓获取失败: {e}")
             return []
 
     def _generate_json(self):

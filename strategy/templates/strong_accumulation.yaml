@@ -82,7 +82,7 @@ candidate_pool:
 - AMAT
 - KLAC
 - LRCX
-- CAT
+- GS
 - PG
 - AMD
 - ASML
@@ -150,4 +150,4 @@ universe_selector:
   opening:
     default_position_size_pct: 10.0
     top_n: 3
-_last_refresh: '2026-07-20T02:52:05.669061'
+_last_refresh: '2026-07-20T18:00:33.075483'
