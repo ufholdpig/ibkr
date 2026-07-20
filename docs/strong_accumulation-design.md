@@ -1,8 +1,8 @@
 # Strong Accumulation 策略设计方案
 
-**创建时间**: 2026-07-18  
-**更新时间**: 2026-07-18（整合实现阶段）  
-**状态**: Phase 1 已完成，ibclient 命令待实现  
+**创建时间**: 2026-07-18
+**更新时间**: 2026-07-20（Section 12/13 历史遗留清理 + 市值修复记录）
+**状态**: ✅ Phase 1 已完成，核心功能验证通过（候选池报告、Section 11.4 BUY 信号、持仓市值）
 **目标**: 2-6个月周期挖掘强势股，在启动前进场
 
 ---
@@ -92,18 +92,19 @@
 ```
 阶段1: 首次信号
   条件: 技术面满足≥4个条件
-  动作: 买入30%目标仓位
-  
+  动作: 买入 10% 目标仓位（`default_position_size_pct`，见 Section 11.6）
+
 阶段2: 回调加仓
   条件: 价格回撤5%且不破MA50
-  动作: 加仓40%目标仓位
-  
+  动作: 加仓 10% 目标仓位
+
 阶段3: 突破加仓
   条件: 创20日新高且成交量>2倍
-  动作: 加仓30%目标仓位
+  动作: 加仓 10% 目标仓位
 ```
 
-**目标仓位**: 单标的100%
+**单标的最大仓位**: 30%（由 `universe_selector.opening.default_position_size_pct` 控制，初期保守）
+> ⚠️ 文档旧版写"单标的100%"为过时描述，实际使用 Section 11.6 的配置值
 
 ### 2.4 风控参数
 
@@ -605,11 +606,12 @@ new_top2 = 新排序后的前2名
 
 ```yaml
 candidate_pool:
-  capacity: 10    # 盘后刷新后保留 top N
+  capacity: 10    # 盘后刷新后保留 top N（设计文档描述，实际硬编码为 top10）
 ```
 
-- 盘后执行：评估全量 → 取 top N → 更新 ibkr.yaml
+- 盘后执行：评估全量 → 取 top N → 更新候选池
 - 盘中执行：不增删标的，只调整排名
+- `capacity` 字段在 `strategy/templates/strong_accumulation.yaml` 中定义但未被代码引用，top10 由 `universe_selector.opening.top_n` 控制
 
 ### 11.7 信号去重机制
 
@@ -664,45 +666,50 @@ IBKR 回填状态（SUBMITTED → FILLED / FAILED）
 
 ---
 
-## 十二、TODO（更新）
+## 十二、TODO
 
-- [x] **Top2 决策框架** — 用 top2 替代 score 阈值对比（2026-07-19）
-- [x] **盘中/盘后执行区分** — scope 参数区分两种模式（2026-07-19）
-- [ ] **ibclient universe-refresh 命令** — 写入 signal JSON + 触发 execute()
-- [ ] **post-market 集成** — 在盘后报告生成流程中调用 UniverseSelector
-- [ ] **ibkr.yaml 动态更新** — 盘后刷新后更新 top N
-- [ ] **持仓预检** — 提交订单前检查 live 持仓（real account 风控）
-- [ ] **去重机制** — 同标的同天同来源幂等写入
-- [ ] **watch daemon 整合** — 盘中执行时重新读取 ibkr.yaml
+- [x] **Top2 决策框架** — ✅ 已完成（2026-07-19），Section 11 详细描述
+- [x] **盘中/盘后执行区分** — ✅ 已完成，scope=full/pool_only
+- [x] **ibclient universe-refresh 命令** — ✅ 已完成，cron job `cdee1bf1a8db` 每日 18:00 ET 运行
+- [x] **post-market 集成** — ✅ 已完成，PostMarketExecutor._get_positions_from_ibkr() 已调用市值计算
+- [x] **ibkr.yaml 动态更新** — ✅ 已完成，候选池写入 `strategy/templates/strong_accumulation.yaml`
+- [x] **去重机制** — ✅ 已工作，基于 order.json SUBMITTED/FILLED 跳过重复信号
+- [x] **watch daemon 整合** — ✅ 已工作（PID 506832，盘前手动唤醒 + 盘后信号执行）
+- [ ] **持仓预检** — 提交订单前检查 live 持仓（real account 风控），当前 paper 账户暂不需要
 
 ---
 
-## 十三、实现状态（更新）
+## 十三、实现状态
 
-### 已完成
+### 已完成 ✅
 
-|| 模块 | 文件 | 状态 |
+| 模块 | 文件 | 状态 | 备注 |
+|------|------|------|------|
+| UniverseSelector + Top2 框架 | `src/trading/universe_selector.py` | ✅ | Section 11.4 BUY 信号已验证（07-20） |
+| WatchlistManager | `src/core/watchlist_manager.py` | ✅ | |
+| 配置集成 | `config/ibkr.yaml` + `config/config.py` | ✅ | market_data_source 已支持 yfinance |
+| ibclient 命令框架 | `skills/ibclient-all-in-one/ibclient.py` | ✅ | universe-refresh 已接入 cron |
+| 持仓市值计算 | `src/trading/post_market.py` | ✅ | MarketDataProvider + yfinance（07-20 修复） |
+| 候选池报告 | `universe_selector.generate_candidate_pool_markdown_report()` | ✅ | candidate-pool_YYYYMMDD.md 追加报告 |
+| ibkr.yaml 动态更新 | `strategy/templates/strong_accumulation.yaml` | ✅ | 盘后 18:00 ET 写入 |
+
+### 进行中 🟡
+
+| 模块 | 说明 | 状态 |
 |------|------|------|
-| UniverseSelector | `src/trading/universe_selector.py` | ✅ 已完成（top2 框架） |
-| WatchlistManager | `src/core/watchlist_manager.py` | ✅ 已完成 |
-| 配置集成 | `config/ibkr.yaml` + `config/config.py` | ✅ 已完成 |
-| ibclient 命令框架 | `skills/ibclient-all-in-one/ibclient.py` | ⚠️ 部分完成 |
-
-### 进行中
-
-|| 模块 | 说明 | 状态 |
-|------|------|------|
-| Top2 决策逻辑 | `universe_selector.py` | 代码重构中 |
-| ibkr.yaml capacity | `config/ibkr.yaml` | 待添加 |
+| — | 无 | — |
 
 ### 待实现
 
-|| 模块 | 说明 | 优先级 |
-|------|------|------|--------|
-| 去重机制 | signal 写入前检查 | 🔴 高 |
-| ibkr.yaml 动态更新 | 盘后刷新后更新 top N | 🔴 高 |
-| 持仓预检 | 订单提交前 live 持仓检查 | 🔴 高 |
-| watch daemon reload | 每次处理信号前重新读取 ibkr.yaml | 🟡 中 |
+| 模块 | 说明 | 优先级 |
+|------|------|--------|
+| 持仓预检 | 提交订单前 live 持仓检查（real account 风控） | 🟡 中（paper 暂不需要） |
+
+### 07-20 关键验证记录
+
+- **候选池报告**（18:00 ET）：Top2=AMAT/KLAC，BUY AMAT/KLAC x10 已写入 signals_pre_market
+- **市值修复**：post-market 持仓市值/盈亏从 `$0.00` 修正为实时 yfinance 价格
+- **Commit**: `6353eac` fix(post_market): 用 MarketDataProvider+yfinance 计算持仓市值
 
 ---
 
