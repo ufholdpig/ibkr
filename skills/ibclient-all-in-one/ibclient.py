@@ -378,6 +378,10 @@ def cmd_universe_refresh(args):
 
         logger.info(f"✅ 获取 {len(market_data_map)} 只标的的技术指标")
 
+        # 刷新前保存旧 top2（用于盘后持仓决策：判断持仓标的是否新入 top2）
+        old_top2 = selector.top2
+        logger.info(f"📊 刷新前 top2: {old_top2}")
+
         logger.info(f"🔄 刷新候选池（top {selector.CAPACITY}），market_data_map 大小: {len(market_data_map)}")
         # scope=full：直接用全量 sectors 刷新（不依赖 candidate_pool 初始化）
         # scope=pool_only：走 selector 内部逻辑（从 candidate_pool 取）
@@ -433,6 +437,7 @@ def cmd_universe_refresh(args):
         report = selector.generate_report(
             report_date=args.date or "",
             positions=positions,
+            old_top2=old_top2,
         )
 
         # 输出结果
@@ -497,6 +502,23 @@ def cmd_universe_refresh(args):
                 "action": "SELL" if review.action in (PoolAction.REDUCE, PoolAction.CLOSE) else "BUY",
                 "quantity": abs(review.suggested_qty_change),
                 "reason": review.reason or review.action.value,
+                "source": "universe-refresh",
+                "processed": False,
+            })
+
+        # 建仓信号（Section 11.4 盘后决策逻辑）：
+        # 无持仓的新 top2 标的 → BUY signal
+        held_symbols = {p["symbol"] for p in positions} if positions else set()
+        for candidate in report.opening_suggestions:
+            if candidate.symbol in held_symbols:
+                continue  # 已有持仓，跳过（由 position_reviews 处理）
+            signals_to_write.append({
+                "strategy_name": "universe-selector",
+                "strategy_id": "universe-refresh",
+                "symbol": candidate.symbol,
+                "action": "BUY",
+                "quantity": 10,  # 默认建仓量（模板 action.quantity）
+                "reason": f"新入 Top2 建仓候选（得分{candidate.score:.1f}，通过{candidate.passing_count}/7）",
                 "source": "universe-refresh",
                 "processed": False,
             })

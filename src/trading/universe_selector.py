@@ -468,7 +468,8 @@ class UniverseSelector:
         
         return suggestions
     
-    def generate_report(self, report_date: str, positions: List[dict] = None) -> UniverseSelectorReport:
+    def generate_report(self, report_date: str, positions: List[dict] = None,
+                        old_top2: List[str] = None) -> UniverseSelectorReport:
         """生成候选池评估报告
         
         Args:
@@ -487,13 +488,20 @@ class UniverseSelector:
         
         # 持仓评审
         if positions:
-            report.position_reviews = self.evaluate_positions(positions)
+            report.position_reviews = self.evaluate_positions(
+                positions,
+                scope="post_market",
+                old_top2=old_top2,
+            )
         else:
             report.position_reviews = []
         
-        # 建仓建议（如果无持仓）
-        if not positions or all(p.get("quantity", 0) <= 0 for p in positions):
-            report.opening_suggestions = self.suggest_openings()
+        # 建仓建议：始终评估，取 new_top2 前2名（Section 11.4 盘后决策逻辑）
+        # 即使有持仓，若 top2 中有无持仓的标的，也生成建仓建议
+        all_suggestions = self.suggest_openings()
+        # 限制为 top2（设计文档 11.4：只有 new_top2[0] 和 new_top2[1] 可建仓）
+        new_top2 = set(self.top2)
+        report.opening_suggestions = [c for c in all_suggestions if c.symbol in new_top2]
         
         # 汇总动作
         summary: Dict[str, int] = {}
