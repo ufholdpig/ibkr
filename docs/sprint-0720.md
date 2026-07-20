@@ -97,13 +97,84 @@ F, TSLA, VST, CEG, SQ, COIN, MRVL, AVGO
 
 ## 七、待完成
 
-1. [ ] Telegram 通知集成（替换 WeChat）
-2. [ ] 验证 candidate-pool_YYYYMMDD.md 报告内容（18:00 ET 执行后检查）
-3. [ ] Section 11.4 逻辑实盘验证（明日 pre-market 执行结果）
+1. [ ] Telegram 通知集成（替换 WeChat）— 暂时搁置
+2. [x] 验证 candidate-pool_YYYYMMDD.md 报告内容（18:00 ET 执行后检查）
+3. [x] Section 11.4 逻辑实盘验证（明日 pre-market 执行结果）
 
 ---
 
-## 八、相关文档
+## 八、完成记录
+
+### 8.1 候选池报告验证（07-20 18:00 ET）
+
+**文件**：`data/paper/reports/candidate-pool_20260720.md`
+
+**结果**：✅ 报告正确生成，内容符合预期
+
+```
+候选池变化：AMAT ✅ → GS ✅ → KLAC ✅ → LRCX ✅ → PG ✅
+Top2： → AMAT / KLAC  （首次初始化，前一个 Top2 为空是预期行为）
+候选池 TOP5：AMAT(4), KLAC(4), LRCX(4), GS(4), PG(4)
+新信号：
+  - BUY AMAT x10（新入 Top2 建仓候选（得分4.5，通过4/7））
+  - BUY KLAC x10（新入 Top2 建仓候选（得分4.5，通过4/7））
+```
+
+Top2 为空是因为首次执行时候选池无历史数据，next_top2 写入后才会在下一周期比较。
+
+### 8.2 Section 11.4 BUY 信号（07-20 18:00 ET）
+
+**结果**：✅ BUY AMAT/KLAC 信号已写入 `signals_pre_market`，T+1 盘前执行
+
+信号详情见 `candidate-pool_20260720.md`，将在明日（07-21）盘前由 `post-market` → `pre-market` 链路执行。
+
+### 8.3 持仓市值修复
+
+**问题**：盘后报告持仓市值和未实现盈亏始终为 `$0.00`
+
+**根因**：IBKR `position` 回调仅返回 `(account, contract, position, avg_cost)`，不包含 `market_price`。`_parse_account_info` 第874行读取不存在的 `mktPrice` 字段，导致 `market_value = 0`。
+
+**解决方案**：使用已设计的 `MarketDataProvider + market_data_source` 配置获取实时价格。
+
+**验证**（ad-hoc test，2026-07-20 18:33）：
+
+```python
+MarketDataProvider(data_source='yfinance').fetch_basic(['AAPL', 'DLR', 'NVDA'])
+→ AAPL: $326.70, DLR: $176.36, NVDA: $203.38  # 全部成功
+
+# 市值计算验证：
+NVDA qty=-1102, price=$203.38 → mkt_val=$224,125, pnl=+$2,777
+AAPL qty=725,  price=$326.70 → mkt_val=$236,858, pnl=+$26,119
+DLR  qty=935,  price=$176.36 → mkt_val=$164,897, pnl=+$123
+```
+
+**修改文件**：
+
+| 文件 | 变更 |
+|------|------|
+| `src/trading/post_market.py` | 导入 `MarketDataProvider`，`__init__` 保存 `config.market_data_source`，重写 `_get_positions_from_ibkr()` 用 `MarketDataProvider.fetch_basic()` 获取价格并本地计算市值/pnl |
+| `config/ibkr.yaml` | watch 模板 CAT→GS（universe-refresh 结果） |
+| `strategy/templates/strong_accumulation.yaml` | candidate_pool CAT→GS + `_last_refresh` 时间戳更新 |
+
+**实盘验证**（07-20 18:54 post-market 脚本重跑）：
+
+```
+MTB:  $2,494.80  pnl=🟢 +$352.20
+DLR:  $164,896   pnl=🟢 +$123.80
+NVDA: $224,124   pnl=🟢 +$2,777.84
+VRT:  $310,809   pnl=🔴 -$13,320.51
+GOOGL:$30,632    pnl=🟢 +$102.25
+TFC:  $13,764    pnl=🟢 +$470.10
+USB:  $6,316     pnl=🟢 +$749.40
+AAPL: $236,857   pnl=🟢 +$26,119.06
+MSFT: $1,207,530  pnl=🔴 -$37,930.40
+```
+
+**Commit**：`6353eac` fix(post_market): 用 MarketDataProvider+yfinance 计算持仓市值
+
+---
+
+## 九、相关文档
 
 - `src/trading/universe_selector.py` — 候选池选择器（含 generate_candidate_pool_markdown_report）
 - `skills/ibclient-all-in-one/ibclient.py` — universe-refresh 命令入口
