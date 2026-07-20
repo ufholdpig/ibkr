@@ -45,6 +45,7 @@ class MarketData:
     ma_200: Optional[float] = None
     rsi_14: Optional[float] = None
     volume_avg_20d: Optional[float] = None
+    volume_avg_90d: Optional[float] = None
     # --- 趋势跟踪指标 ---
     ma_50_slope: Optional[float] = None
     ma_200_slope: Optional[float] = None
@@ -53,6 +54,7 @@ class MarketData:
     is_consolidating: Optional[bool] = None
     consolidation_days: Optional[int] = None
     volume_ratio: Optional[float] = None
+    volume_ratio_90d: Optional[float] = None
     breakout_detected: Optional[bool] = None
     retrace_to_ma50: Optional[bool] = None
     days_from_high: Optional[int] = None

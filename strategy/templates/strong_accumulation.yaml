@@ -1,182 +1,153 @@
-# Strong Accumulation 策略配置
-# 文档：docs/strong_accumulation-design.md
-# 状态：conditions/action/risk 已补全 (2026-07-19)
-
-strategy_id: "strong_accumulation"
-name: "强势股蓄力池"
-description: "基于板块龙头扫描的强势股候选池，每日盘后动态更新 top 10"
+strategy_id: strong_accumulation
+name: 强势股蓄力池
+description: 基于板块龙头扫描的强势股候选池，每日盘后动态更新 top 10
 enabled: true
 priority: 15
 weight: 1.0
 state: ACTIVE
 type: strong_accumulation
-
-# ============================================================
-# 板块龙头股 — universe-refresh scope=full 时的全量扫描范围
-# 手动维护，修改频率低
-# ============================================================
 sectors:
-  # AI/半导体
   ai_semicon:
-    name: "AI/半导体"
+    name: AI/半导体
     leaders:
-      - NVDA
-      - AVGO
-      - MRVL
-      - AMD
-      - AMAT
-      - KLAC
-      - ASML
-      - TSM
-
-  # 云计算/企业软件
+    - NVDA
+    - AMD
+    - AMAT
+    - KLAC
+    - LRCX
+    - ASML
   cloud_software:
-    name: "云计算/企业软件"
+    name: 云计算/企业软件
     leaders:
-      - MSFT
-      - CRM
-      - SNOW
-      - WDAY
-
-  # 互联网/平台
+    - MSFT
+    - NOW
+    - CRM
+    - SNOW
+    - WDAY
   internet_platform:
-    name: "互联网/平台"
+    name: 互联网/平台
     leaders:
-      - GOOGL
-      - AMZN
-      - META
-
-  # 金融科技
-  fintech:
-    name: "金融科技"
+    - GOOGL
+    - AMZN
+    - META
+    - SHOP
+    - PYPL
+  healthcare:
+    name: 医疗健康
     leaders:
-      - PYPL
-      - SQ
-      - COIN
-      - V
-
-  # 防御型/ETF
-  defensive:
-    name: "防御型/ETF"
+    - ISRG
+    - LLY
+    - JNJ
+    - ABBV
+    - SYK
+  consumer:
+    name: 消费/日用品
     leaders:
-      - JPM
-      - BAC
-      - WFC
-      - XLF
-      - VTI
-
-# ============================================================
-# 候选池 (top 10) — universe-refresh scope=full 动态更新
-# scope=pool_only 时以此为标的列表
-# ============================================================
-candidate_pool: []
-
-# ============================================================
-# 技术面条件 (满足 ≥4 个)
-# 设计依据：docs/strong_accumulation-design.md Section 2.2
-# ============================================================
+    - PG
+    - KO
+    - WMT
+  industrial:
+    name: 工业/防务
+    leaders:
+    - CAT
+    - HON
+    - RTX
+    - LMT
+    - BA
+  financial:
+    name: 金融
+    leaders:
+    - COF
+    - GS
+    - MS
+    - BLK
+    - SCHW
+    - V
+  energy:
+    name: 能源
+    leaders:
+    - XOM
+    - SLB
+  communications:
+    name: 通信
+    leaders:
+    - TMUS
+  broad_market:
+    name: 宽基ETF
+    leaders:
+    - SPY
+    - QQQ
+    - VTI
+candidate_pool:
+- AMAT
+- KLAC
+- LRCX
+- CAT
+- PG
+- AMD
+- ASML
+- SNOW
+- LLY
+- JNJ
 conditions:
   operator: AND
   rules:
-    # 条件1: MA200 slope ±3° (走平区间)
-    # ±3° 相当于 [-3°, +3°]，slope 在此区间表示主力吸筹期
-    - type: sma_slope
-      period: 200
-      threshold: -3
-      multiplier: 3
-      operator: ">"
-
-    # 条件2: 价格距MA200 >10% (已脱离成本区)
-    - type: price_vs_ma
-      period: 200
-      pct_threshold: 10
-
-    # 条件3: 90日低点 > 180日前低点 (底部抬高，拒绝新低)
-    - type: bottom_raised
-
-    # 条件4: MA20 > MA50 (短期趋势向上)
-    # 使用 ma_stack：检查 price > MA50 > MA200 的多头排列
-    - type: ma_stack
-      operator: ">"
-
-    # 条件5a: RSI > 40 (未超卖，有空间)
-    - type: rsi
-      operator: ">"
-      threshold: 40
-
-    # 条件5b: RSI < 70 (未超买，有空间)
-    - type: rsi
-      operator: "<"
-      threshold: 70
-
-    # 条件6: 近5日均量 > 90日均量 × 1.3 (资金关注度提升)
-    - type: volume_spike
-      lookback: 90
-      multiplier: 1.3
-
-    # 条件7a: 52周位置 >= 30% (非低位)
-    - type: position_52w
-      operator: ">="
-      threshold: 0.30
-
-    # 条件7b: 52周位置 <= 80% (非高位)
-    - type: position_52w
-      operator: "<="
-      threshold: 0.80
-
-# ============================================================
-# 建仓策略 (三阶段)
-# 设计依据：docs/strong_accumulation-design.md Section 2.3
-# ============================================================
+  - type: sma_slope
+    period: 200
+    threshold: -3
+    multiplier: 3
+    operator: '>'
+  - type: price_vs_ma
+    period: 200
+    pct_threshold: 10
+  - type: bottom_raised
+  - type: ma_stack
+    operator: '>'
+  - type: rsi
+    operator: '>'
+    threshold: 40
+  - type: rsi
+    operator: <
+    threshold: 70
+  - type: volume_spike
+    lookback: 90
+    multiplier: 1.3
+  - type: position_52w
+    operator: '>='
+    threshold: 0.3
+  - type: position_52w
+    operator: <=
+    threshold: 0.8
 action:
-  # 阶段1: 首次信号
-  type: "LIMIT_BUY"
+  type: LIMIT_BUY
   quantity: 10
-  tif: "DAY"
-
-  # 阶段2/3 由持仓评估触发 (ADD信号由 universe-refresh 持仓决策生成)
-  # 不在此模板中处理，通过 universe_selector.py 的持仓评审逻辑补充
-
-# ============================================================
-# 风控参数
-# 设计依据：docs/strong_accumulation-design.md Section 2.4
-# ============================================================
+  tif: DAY
 risk:
-  stop_loss_type: "ma50_minus_pct"
-  stop_loss_pct: 0.05        # MA50下方5%止损
-  take_profit_pct: 0.20      # 移动止盈20%后启动
-  trailing_stop_pct: 0.10    # 最高点回撤10%止盈
-  max_holding_days: 180      # 6个月强制平仓
-
-# ============================================================
-# 策略参数 (从 ibkr.yaml universe_selector 节迁移)
-# ============================================================
+  stop_loss_type: ma50_minus_pct
+  stop_loss_pct: 0.05
+  take_profit_pct: 0.2
+  trailing_stop_pct: 0.1
+  max_holding_days: 180
 universe_selector:
-  # 候选池容量：盘后刷新后保留 top N
   capacity: 10
-
-  # 持仓数量限制
   max_positions: 2
   min_positions: 1
-
-  # 入围条件
   required_passing: 4
   min_score_threshold: 4.0
-
-  # 持仓评估参数
   position_review:
-    take_profit_pct: 20.0   # 盈利超过此比例触发止盈（减半仓）
-    stop_loss_pct: -10.0     # 亏损超过此比例触发止损（清仓）
-    reduce_ratio: 0.5        # 减仓比例
-
-  # 黑名单：永不纳入
+    take_profit_pct: 20.0
+    stop_loss_pct: -10.0
+    reduce_ratio: 0.5
   blacklist:
-    - F      # 福特，历史表现差
-    - TSLA   # 波动太大
-    - VST    # 能源股，周期性强
-    - CEG    # 核能，政策风险
-
-  # 建仓参数
+  - F
+  - TSLA
+  - VST
+  - CEG
+  - SQ
+  - COIN
+  - MRVL
+  - AVGO
   opening:
     default_position_size_pct: 10.0
     top_n: 3
+_last_refresh: '2026-07-20T02:52:05.669061'

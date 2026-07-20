@@ -24,68 +24,9 @@ class GatewayConfig:
     account_id: str = ""  # 指定子账号 ID（多账号时必需），空字符串由 TWS 默认决定
 
 
-@dataclass
-class WatchConfig:
-    """Watch 守护进程配置 — 以模版为中心
-
-    templates: {template_name: [symbols]} — 每个模版绑定适用的标的列表
-    cooldown_minutes: {symbol: minutes, "default": minutes} — 标的冷却时间
-    strong_accumulation: StrongAccumulationConfig — 强势股蓄力池配置
-    """
-    templates: dict = field(default_factory=dict)
-    cooldown_minutes: dict = field(default_factory=lambda: {"default": 20})
-    poll_interval: int = 5
-    indicator_refresh_minutes: int = 30
-    template_dir: str = "strategy/templates"
-    real_cooldown_multiplier: float = 4.0
-    strong_accumulation: Optional[StrongAccumulationConfig] = None
-
-    @property
-    def symbol_list(self) -> list[str]:
-        """从所有模版绑定推导唯一标的列表"""
-        symbols = set()
-        for syms in self.templates.values():
-            symbols.update(syms)
-        return sorted(symbols)
-
-    def get_cooldown(self, symbol: str) -> int:
-        """获取标的的冷却时间，未配置则用 default"""
-        return self.cooldown_minutes.get(symbol, self.cooldown_minutes.get("default", 20))
-
-
-@dataclass
-class RiskConfig:
-    """风控引擎配置
-
-    tfsa_limitation=true  硬编码 TFSA 规则（年交易 ≤80, 禁止做空, 禁止日内交易）
-    tfsa_limitation=false 保证金/普通账户，不施加 TFSA 限制
-    """
-    enabled: bool = True
-    fail_closed: bool = False       # true: 风控不可用时拒绝交易（实盘必须 true）
-    position_limit_pct: float = 20.0
-    max_order_value_pct: float = 50.0  # 单笔订单价值 ≤ 账户净值的百分比
-    tfsa_limitation: bool = True
-
-
-@dataclass
-class UniverseSelectorConfig:
-    """候选池选择器配置"""
-    enabled: bool = True
-    capacity: int = 10               # 盘后刷新后保留 top N
-    max_positions: int = 2
-    min_positions: int = 1
-    required_passing: int = 4
-    min_score_threshold: float = 4.0
-    # 持仓评估
-    take_profit_pct: float = 20.0
-    stop_loss_pct: float = -10.0
-    reduce_ratio: float = 0.5
-    # 黑名单
-    blacklist: list = field(default_factory=list)
-    # 建仓参数
-    default_position_size_pct: float = 10.0
-    top_n: int = 3
-
+# =============================================================================
+# StrongAccumulationConfig — 必须放在 WatchConfig 之前（因 WatchConfig 引用了它）
+# =============================================================================
 
 @dataclass
 class StrongAccumulationConfig:
@@ -95,7 +36,6 @@ class StrongAccumulationConfig:
     candidate_pool: top 10 候选池（scope=pool_only 使用，scope=full 后动态更新）
     universe_selector: 策略参数（从 ibkr.yaml universe_selector 节迁移）
     """
-    # sectors: {sector_name: {name: str, leaders: [str]}}
     sectors: dict = field(default_factory=dict)
     candidate_pool: list = field(default_factory=list)
 
@@ -220,17 +160,78 @@ def save_strong_accumulation_config(cfg: StrongAccumulationConfig):
     with open(template_path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
 
-    # 更新 candidate_pool
     data["candidate_pool"] = cfg.candidate_pool
-    # 更新时间戳
     data["_last_refresh"] = datetime.datetime.now().isoformat()
 
     with open(template_path, "w", encoding="utf-8") as f:
         yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
 
-    # 清除缓存
     global _STRONG_ACC_CONFIG_CACHE
     _STRONG_ACC_CONFIG_CACHE = None
+
+
+# =============================================================================
+# 其他 Config 类
+# =============================================================================
+
+@dataclass
+class WatchConfig:
+    """Watch 守护进程配置 — 以模版为中心
+
+    templates: {template_name: [symbols]} — 每个模版绑定适用的标的列表
+    cooldown_minutes: {symbol: minutes, "default": minutes} — 标的冷却时间
+    strong_accumulation: StrongAccumulationConfig — 强势股蓄力池配置
+    """
+    templates: dict = field(default_factory=dict)
+    cooldown_minutes: dict = field(default_factory=lambda: {"default": 20})
+    poll_interval: int = 5
+    indicator_refresh_minutes: int = 30
+    template_dir: str = "strategy/templates"
+    real_cooldown_multiplier: float = 4.0
+    strong_accumulation: Optional[StrongAccumulationConfig] = None
+
+    @property
+    def symbol_list(self) -> list[str]:
+        """从所有模版绑定推导唯一标的列表"""
+        symbols = set()
+        for syms in self.templates.values():
+            symbols.update(syms)
+        return sorted(symbols)
+
+    def get_cooldown(self, symbol: str) -> int:
+        """获取标的的冷却时间，未配置则用 default"""
+        return self.cooldown_minutes.get(symbol, self.cooldown_minutes.get("default", 20))
+
+
+@dataclass
+class RiskConfig:
+    """风控引擎配置
+
+    tfsa_limitation=true  硬编码 TFSA 规则（年交易 ≤80, 禁止做空, 禁止日内交易）
+    tfsa_limitation=false 保证金/普通账户，不施加 TFSA 限制
+    """
+    enabled: bool = True
+    fail_closed: bool = False       # true: 风控不可用时拒绝交易（实盘必须 true）
+    position_limit_pct: float = 20.0
+    max_order_value_pct: float = 50.0  # 单笔订单价值 ≤ 账户净值的百分比
+    tfsa_limitation: bool = True
+
+
+@dataclass
+class UniverseSelectorConfig:
+    """候选池选择器配置"""
+    enabled: bool = True
+    capacity: int = 10               # 盘后刷新后保留 top N
+    max_positions: int = 2
+    min_positions: int = 1
+    required_passing: int = 4
+    min_score_threshold: float = 4.0
+    take_profit_pct: float = 20.0
+    stop_loss_pct: float = -10.0
+    reduce_ratio: float = 0.5
+    blacklist: list = field(default_factory=list)
+    default_position_size_pct: float = 10.0
+    top_n: int = 3
 
 
 @dataclass
@@ -322,34 +323,29 @@ class IBKRConfig:
 
     @classmethod
     def from_yaml(cls, config_path: str) -> "IBKRConfig":
-        """
-        从YAML文件加载配置
-        """
         path = Path(config_path)
         if not path.exists():
             raise FileNotFoundError(f"配置文件不存在: {config_path}")
-        
+
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
-        
+
         if not data or "ibkr" not in data:
             raise ValueError("配置文件格式错误：缺少ibkr节点")
-        
+
         ibkr_data = data["ibkr"]
         market_data_source = ibkr_data.get("market_data_source", "auto")
         if market_data_source not in ("auto", "ibkr", "yfinance"):
             raise ValueError(f"market_data_source 必须是 'auto', 'ibkr' 或 'yfinance'，当前值: {market_data_source}")
         approval_required = ibkr_data.get("approval_required", False)
         gateway_data = ibkr_data.get("gateway", {})
-        
-        # 处理client_id随机值
-        # 0 表示自动分配（随机 100-999），同 "random" / None
+
         client_id = gateway_data.get("client_id", "random")
         if client_id == "random" or client_id is None or client_id == 0:
             client_id = random.randint(100, 999)
         else:
             client_id = int(client_id)
-        
+
         account_id = os.getenv("IBKR_ACCOUNT_ID", gateway_data.get("account_id", ""))
         gateway = GatewayConfig(
             host=os.getenv("IBKR_HOST", gateway_data.get("host", "127.0.0.1")),
@@ -360,10 +356,8 @@ class IBKRConfig:
             retry_delay=int(os.getenv("IBKR_RETRY_DELAY", gateway_data.get("retry_delay", 2))),
             account_id=account_id,
         )
-        # 加载候选池选择器配置（从 strong_accumulation.yaml）
         strong_acc_cfg = load_strong_accumulation_config()
 
-        # 加载 watch 守护进程配置
         watch_data = ibkr_data.get("watch", {})
         templates_raw = watch_data.get("templates", {})
         cooldown_raw = watch_data.get("cooldown_minutes", {"default": 20})
@@ -377,8 +371,7 @@ class IBKRConfig:
             real_cooldown_multiplier=watch_data.get("real_cooldown_multiplier", 4.0),
             strong_accumulation=strong_acc_cfg,
         )
-        
-        # 加载风控引擎配置
+
         risk_data = ibkr_data.get("risk_engine", {})
         risk_engine = RiskConfig(
             enabled=risk_data.get("enabled", True),
@@ -388,8 +381,6 @@ class IBKRConfig:
             tfsa_limitation=risk_data.get("tfsa_limitation", True),
         )
 
-        # 候选池选择器配置（从 strong_accumulation.yaml 迁移）
-        # ibkr.yaml 中 universe_selector 节已废弃，参数统一从 strong_accumulation.yaml 读取
         universe_selector = UniverseSelectorConfig(
             enabled=True,
             capacity=strong_acc_cfg.capacity,
@@ -413,7 +404,6 @@ class IBKRConfig:
 # =============================================================================
 # 自适应学习配置 (Phase 3 D35)
 # =============================================================================
-
 
 @dataclass
 class LearningConfig:
@@ -480,18 +470,8 @@ def load_adaptive_config() -> AdaptiveConfig:
 
 
 def load_config(config_path: Optional[str] = None) -> IBKRConfig:
-    """
-    加载IBKR配置
-    
-    Args:
-        config_path: 配置文件路径，默认为 config/ibkr.yaml
-        
-    Returns:
-        IBKRConfig: 配置对象
-    """
     if config_path is None:
-        # 默认配置路径
         project_root = Path(__file__).parent.parent
         config_path = project_root / "config" / "ibkr.yaml"
-    
+
     return IBKRConfig.from_yaml(str(config_path))

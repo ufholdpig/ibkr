@@ -306,13 +306,8 @@ def cmd_universe_refresh(args):
             logger.info(f"❌ 连接失败: {result.error_message}")
             return 1
 
-        # 获取候选池标的列表
+        # 获取候选池 selector（用于后续 refresh 和 report）
         selector = create_universe_selector()
-        symbols = list(selector.candidate_symbols)
-
-        if not symbols:
-            logger.info("❌ 候选池为空，请先执行 universe-refresh (scope=full) 扫描板块龙头股填充 top10")
-            return 1
 
         # 根据 NYSE 日历判断当前是否在交易时段（9:30-16:00 ET）
         # 盘中（NYSE开市）→ pool_only；盘前/盘后/周末/假日 → full（全量刷新）
@@ -344,6 +339,10 @@ def cmd_universe_refresh(args):
             if not symbols:
                 logger.info("⏭ scope=pool_only，候选池为空，跳过盘中刷新（请先执行 scope=full 填充 top10）")
                 return 0
+
+        if not symbols:
+            logger.info("❌ 候选池为空，请先执行 universe-refresh (scope=full) 扫描板块龙头股填充 top10")
+            return 1
         logger.info(f"📊 获取 {len(symbols)} 只候选标的的市场数据... [scope={execution_scope}]")
 
         # 使用 MarketDataProvider（有 yfinance fallback）获取历史数据并计算技术指标
@@ -353,7 +352,7 @@ def cmd_universe_refresh(args):
         failed = []
 
         for i, sym in enumerate(symbols):
-            bars = provider.fetch_historical(sym, days=250)
+            bars = provider.fetch_historical(sym, days=365)
             if not bars or len(bars) < 60:
                 msg = f"[{i+1}/{len(symbols)}] ⚠️ {sym}: 历史数据不足（{len(bars) if bars else 0} bars），跳过"
                 logger.debug(msg)  # 次要信息 → audit.log
@@ -380,15 +379,21 @@ def cmd_universe_refresh(args):
         logger.info(f"✅ 获取 {len(market_data_map)} 只标的的技术指标")
 
         logger.info(f"🔄 刷新候选池（top {selector.CAPACITY}），market_data_map 大小: {len(market_data_map)}")
-        # 刷新候选池
-        selector.refresh(market_data_map)
+        # scope=full：直接用全量 sectors 刷新（不依赖 candidate_pool 初始化）
+        # scope=pool_only：走 selector 内部逻辑（从 candidate_pool 取）
+        if execution_scope == "full":
+            # 手动传入所有标的，不依赖 selector._candidate_symbols（此时为空的）
+            selector.refresh(market_data_map, symbols=symbols)
+        else:
+            selector.refresh(market_data_map)
         logger.info(f"✅ 候选池刷新完成")
 
         # ============================================================
         # scope=full 后写回 top 10（同时更新两个配置文件）
+        # 注意：即使 candidates 为空（0只通过评审），_top_n_for_save 仍包含得分最高的标的
         # ============================================================
-        if execution_scope == "full" and selector.candidates:
-            top_symbols = [c.symbol for c in selector.candidates[:selector.CAPACITY]]
+        if execution_scope == "full":
+            top_symbols = selector._top_n_for_save
             logger.info(f"📝 scope=full 写回 top {len(top_symbols)}: {top_symbols}")
 
             # 1. 更新 strong_accumulation.yaml candidate_pool

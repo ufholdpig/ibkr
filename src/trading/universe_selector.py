@@ -215,6 +215,7 @@ class UniverseSelector:
         
         self._candidate_symbols: Set[str] = set(candidate_symbols or [])
         self.candidates: List[Candidate] = []
+        self._top_n_for_save: List[str] = []  # 总是保存得分最高的 top N（含未通过评审的）
         self.last_refresh: Optional[datetime] = None
         
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -248,22 +249,24 @@ class UniverseSelector:
         self._candidate_symbols.discard(symbol)
     
     def refresh(self, market_data_map: Dict[str, MarketData],
-                historical_data: Dict[str, List] = None) -> List[Candidate]:
+                historical_data: Dict[str, List] = None,
+                symbols: List[str] = None) -> List[Candidate]:
         """刷新候选池
-        
+
         Args:
             market_data_map: 市场数据 (symbol -> MarketData)
             historical_data: 历史K线数据 (symbol -> List[Bar])
-        
-        Returns:
-            通过评审的候选标的列表
+            symbols: 可选，覆盖默认的 _candidate_symbols（用于 scope=full 全量扫描）
         """
         self.logger.debug(f"刷新候选池 START，候选标的数: {len(self._candidate_symbols)}")
-        
+
         candidates = []
         hist_data = historical_data or {}
-        
-        for symbol in self._candidate_symbols:
+
+        # 优先使用传入的 symbols，否则用内部的 _candidate_symbols
+        symbols_to_evaluate = symbols if symbols is not None else list(self._candidate_symbols)
+
+        for symbol in symbols_to_evaluate:
             data = market_data_map.get(symbol)
             if not data:
                 continue
@@ -274,19 +277,20 @@ class UniverseSelector:
         
         # 按得分排序
         candidates.sort(key=lambda x: x.score, reverse=True)
-        
-        # 过滤：只保留满足条件的
+
+        # 保存所有评估过的标的（用于持仓判断 + YAML写回）
+        self._evaluated_candidates = candidates
+
+        # 过滤：只保留满足条件的（用于评审报告）
         self.candidates = [
-            c for c in candidates 
+            c for c in candidates
             if c.passing_count >= self.REQUIRED_PASSING and c.score >= self.MIN_SCORE_THRESHOLD
         ]
-        
-        # 应用容量限制（取 top N）
-        if self.CAPACITY and len(self.candidates) > self.CAPACITY:
-            self.candidates = self.candidates[:self.CAPACITY]
-        
-        # 保存所有评估过的标的（用于持仓判断：是否曾经通过评估）
-        self._evaluated_candidates = candidates
+
+        # 应用容量限制（取 top N）— 基于所有评估过的标的写回YAML
+        # 确保即使0只通过评审，top N 仍被保存（供次日观察）
+        top_n = candidates[:self.CAPACITY] if self.CAPACITY else candidates
+        self._top_n_for_save = [c.symbol for c in top_n]
         
         self.last_refresh = datetime.now()
         

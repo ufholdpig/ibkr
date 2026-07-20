@@ -1,38 +1,33 @@
-# IBKR Gateway 连接配置
-# 所有参数均可通过环境变量覆盖
-# 注意：端口号与账户类型无关，仅用于本地连接 IB Gateway
-# 4001/4002 为常用端口，可根据实际 IB Gateway 配置调整
-
 ibkr:
-  # 市场数据源: "auto" (IBKR优先, 失败自动回退yfinance), "ibkr", "yfinance"
-  market_data_source: "yfinance"
-  approval_required: false  # false: 信号直接提交 IBKR，无需手动审批
-  
+  market_data_source: yfinance
+  approval_required: false
   gateway:
-    #host: "127.0.0.1"
-    host: "192.168.2.18"
-    port: 4002  # IB Gateway (4001=实盘, 4002=Paper)
-    client_id: 0  # 由 SessionManager 自动管理（0 表示自动分配）
+    host: 192.168.2.18
+    port: 4002
+    client_id: 0
     timeout: 15
     max_retries: 3
     retry_delay: 2
-    account_id: "DU4011059"  # 子账号 ID（Paper=DU4011059，实盘=实盘账号）
-  
-  # Watch 守护进程配置
-  # templates: 以模版为中心，每个模版绑定适用的标的列表
+    account_id: DU4011059
   watch:
     poll_interval: 5
     indicator_refresh_minutes: 30
-    template_dir: "strategy/templates"
-    # 实盘冷却倍率: Paper 冷却 x 此值 = 实盘冷却 (4x = 15min→60min, 30min→120min)
+    template_dir: strategy/templates
     real_cooldown_multiplier: 4
-
     cooldown_minutes:
       default: 20
-
-    # 策略模板 — strong_accumulation 由 universe-refresh 盘后动态更新
     templates:
-      strong_accumulation: []
+      strong_accumulation:
+      - AMAT
+      - KLAC
+      - LRCX
+      - CAT
+      - PG
+      - AMD
+      - ASML
+      - SNOW
+      - LLY
+      - JNJ
       trend_entry: []
       trend_entry.1: []
       trend_entry.2: []
@@ -45,12 +40,8 @@ ibkr:
       trend_entry_strict: []
       value_buy: []
       futures_trend: []
-
-  # 风控引擎配置
-  # tfsa_limitation=true 时硬编码 TFSA 规则（年交易 ≤80, 禁止做空, 禁止日内交易）
-  # Paper 测试时 fail_closed=false，实盘部署前设为 true
   risk_engine:
     enabled: true
-    tfsa_limitation: true     # false=保证金/普通账户
-    fail_closed: false        # true: 风控不可用时拒绝交易（实盘必须 true）
+    tfsa_limitation: true
+    fail_closed: false
     position_limit_pct: 20.0
