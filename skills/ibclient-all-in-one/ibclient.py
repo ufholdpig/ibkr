@@ -380,6 +380,7 @@ def cmd_universe_refresh(args):
 
         # 刷新前保存旧 top2（用于盘后持仓决策：判断持仓标的是否新入 top2）
         old_top2 = selector.top2
+        old_candidate_symbols = [c.symbol for c in selector.candidates]
         logger.info(f"📊 刷新前 top2: {old_top2}")
 
         logger.info(f"🔄 刷新候选池（top {selector.CAPACITY}），market_data_map 大小: {len(market_data_map)}")
@@ -557,30 +558,43 @@ def cmd_universe_refresh(args):
                     signals_after_dedup.append(sig)
             if not signals_after_dedup:
                 logger.info("ℹ️  所有信号均为重复，跳过写入")
-                client.disconnect()
-                logger.info("✅ universe-refresh 完成")
-                return 0
             logger.info(f"✅ 去重完成：{len(signals_to_write)} → {len(signals_after_dedup)}（过滤 {duplicate_count} 个重复）")
             # ========== 去重检查结束 ==========
 
-            # 写入信号文件
-            et = get_current_et_time()
-            # universe-refresh 是盘后操作，信号始终写入 signals_pre_market，等待次日盘前执行
-            section = "signals_pre_market"
+            # 生成候选池更新报告（每次 scope=full 都追加一条记录）
+            from src.trading.universe_selector import generate_candidate_pool_markdown_report
+            exec_time = get_current_et_time().strftime("%H:%M:%S")
+            report_date = args.date or get_current_et_time().strftime("%Y%m%d")
+            generate_candidate_pool_markdown_report(
+                report_date=report_date,
+                execution_time=exec_time,
+                old_top2=old_top2,
+                new_top2=selector.top2,
+                old_pool_symbols=old_candidate_symbols,
+                new_candidates=report.candidate_pool,
+                position_reviews=report.position_reviews,
+                signals=signals_after_dedup,
+            )
 
-            generator = SignalGenerator()
-            signal_data = generator._load_signal_file()
-            # 替换 signals_pre_market 而非追加，防止重复执行导致信号累积
-            signal_data[section] = list(signals_after_dedup)
-            generator._save_signal_file(signal_data)
+            if signals_after_dedup:
+                # 写入信号文件
+                et = get_current_et_time()
+                # universe-refresh 是盘后操作，信号始终写入 signals_pre_market，等待次日盘前执行
+                section = "signals_pre_market"
 
-            logger.info(f"✅ 写入 {len(signals_after_dedup)} 个信号到 {section}，触发 execute()")
+                generator = SignalGenerator()
+                signal_data = generator._load_signal_file()
+                # 替换 signals_pre_market 而非追加，防止重复执行导致信号累积
+                signal_data[section] = list(signals_after_dedup)
+                generator._save_signal_file(signal_data)
 
-            # 触发 execute（复用 watch_daemon 链路）— 始终走盘前通道
-            from src.trading.pre_market import execute as premkt_exec
-            premkt_exec()
-        else:
-            logger.info("ℹ️  无需执行的信号（全部 HOLD/SKIP）")
+                logger.info(f"✅ 写入 {len(signals_after_dedup)} 个信号到 {section}，触发 execute()")
+
+                # 触发 execute（复用 watch_daemon 链路）— 始终走盘前通道
+                from src.trading.pre_market import execute as premkt_exec
+                premkt_exec()
+            else:
+                logger.info("ℹ️  无新信号，跳过 pre-market.execute()")
 
         client.disconnect()
         logger.info("✅ universe-refresh 完成")

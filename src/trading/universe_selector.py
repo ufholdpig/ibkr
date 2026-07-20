@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import List, Dict, Optional, Set
+from pathlib import Path
 
 from src.core.strategy import MarketData
 
@@ -511,6 +512,86 @@ class UniverseSelector:
         report.actions_summary = summary
         
         return report
+
+
+def generate_candidate_pool_markdown_report(
+    report_date: str,
+    execution_time: str,
+    old_top2: List[str],
+    new_top2: List[str],
+    old_pool_symbols: List[str],
+    new_candidates: List["Candidate"],
+    position_reviews: List["PositionReview"],
+    signals: List[dict],
+    output_dir: Optional[str] = None,
+) -> None:
+    """生成候选池更新报告，追加到 candidate-pool_{date}.md
+
+    每次 scope=full 的 universe-refresh 调用一次，追加一条时间线记录。
+    格式：### HH:MM:SS ET 候选池更新
+          - 变化：{out} ❌ → {in} ✅（如有）
+          - top2：旧 → 新
+          - 持仓评审 & 新信号（如有）
+    """
+    from src.core.paths import get_path
+
+    if output_dir:
+        report_file = Path(output_dir) / f"candidate-pool_{report_date}.md"
+    else:
+        report_file = get_path("reports", f"candidate-pool_{report_date}.md")
+
+    old_set = set(old_pool_symbols)
+    new_set = set(c.symbol for c in new_candidates)
+    added = new_set - old_set
+    removed = old_set - new_set
+
+    lines = []
+    lines.append(f"### {execution_time} ET 候选池更新（scope=full）")
+    lines.append("")
+
+    if added or removed:
+        diff_parts = []
+        for s in sorted(removed):
+            diff_parts.append(f"{s} ❌")
+        for s in sorted(added):
+            diff_parts.append(f"{s} ✅")
+        lines.append(f"- 候选池变化：{' → '.join(diff_parts)}")
+    else:
+        lines.append("- 候选池变化：无（top10 未变）")
+
+    if old_top2 != new_top2:
+        lines.append(f"- Top2：{' / '.join(old_top2)} → {' / '.join(new_top2)}")
+    else:
+        lines.append(f"- Top2：{' / '.join(new_top2)}（无变化）")
+
+    if new_candidates:
+        top5 = new_candidates[:5]
+        lines.append(f"- 候选池 TOP5：{', '.join(f'{c.symbol}({c.score:.0f})' for c in top5)}")
+
+    if position_reviews:
+        lines.append("- 持仓评审：")
+        for r in position_reviews:
+            pnl = f"{r.unrealized_pnl_pct:+.1f}%" if r.unrealized_pnl_pct else "N/A"
+            lines.append(f"  - {r.symbol}：{r.action.value}（{pnl}）{r.reason or ''}")
+
+    if signals:
+        lines.append("- 新信号：")
+        for sig in signals:
+            lines.append(f"  - BUY {sig['symbol']} x{sig['quantity']}（{sig['reason']}）")
+
+    lines.append("")
+    content = "\n".join(lines) + "\n"
+
+    # 追加写入
+    if report_file.exists():
+        with open(report_file, "a", encoding="utf-8") as f:
+            f.write(content)
+    else:
+        header = f"# 候选池更新 — {report_date}\n\n"
+        with open(report_file, "w", encoding="utf-8") as f:
+            f.write(header + content)
+
+    logger.info(f"✅ 候选池报告已追加：{report_file}")
 
 
 # ============================================================
