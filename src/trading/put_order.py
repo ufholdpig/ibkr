@@ -12,7 +12,7 @@
 import time
 from datetime import datetime
 from src.core.client import IBKRClient, create_contract
-from src.core.orders import place_order, Order
+from src.core.orders import place_order, place_bracket_order, Order
 from src.core.risk_engine import RiskEngine
 from src.core.logger import get_logger
 from config.config import get_instrument_registry
@@ -183,8 +183,9 @@ def build_and_submit_order(client: IBKRClient, signal: dict,
                 order_id=0,
                 account=client.config.account_id or "",
                 action=ib_action,
-                order_type="MKT",
+                order_type="LMT",
                 total_quantity=quantity,
+                limit_price=signal.get("price") or signal.get("target_price") or 0,
                 tif="DAY",
             )
 
@@ -202,6 +203,36 @@ def build_and_submit_order(client: IBKRClient, signal: dict,
                     currency="CAD",
                 )
                 place_result = place_order(client, order_obj, contract_tse, timeout=30)
+
+            if place_result.success:
+                # OCO 订单：止损 + 止盈（IBKR bracket order）
+                try:
+                    client_cfg = getattr(client, "_full_config", None)
+                    us_cfg = getattr(client_cfg, "universe_selector", None)
+                    if us_cfg and getattr(us_cfg, "oco_enabled", True):
+                        sl_pct = getattr(us_cfg, "stop_loss_pct", -10.0)   # e.g. -10 → -10%
+                        tp_pct = getattr(us_cfg, "take_profit_pct", 20.0)  # e.g. 20 → +20%
+                        fill_price = place_result.avg_fill_price or place_result.filled_qty
+                        if fill_price > 0:
+                            sl_price = round(fill_price * (1 + sl_pct / 100), 2)
+                            tp_price = round(fill_price * (1 + tp_pct / 100), 2)
+                            logger.info(
+                                f"📌 OCO 挂单: {symbol} SL={sl_price} ({sl_pct}%), "
+                                f"TP={tp_price} ({tp_pct}%)"
+                            )
+                            place_bracket_order(
+                                client=client,
+                                contract=contract,
+                                action=ib_action,
+                                quantity=quantity,
+                                limit_price=fill_price,
+                                stop_loss_price=sl_price,
+                                take_profit_price=tp_price,
+                                tif="GTC",
+                                timeout=15,
+                            )
+                except Exception as e:
+                    logger.warning(f"⚠️ OCO 订单提交失败（不阻断主单）: {e}")
 
             server_status = getattr(place_result, "status", "Unknown")
             return {

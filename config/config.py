@@ -232,6 +232,7 @@ class UniverseSelectorConfig:
     blacklist: list = field(default_factory=list)
     default_position_size_pct: float = 10.0
     top_n: int = 3
+    oco_enabled: bool = True          # true: 建仓后自动挂止损+止盈 OCO 订单
 
 
 @dataclass
