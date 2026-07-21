@@ -444,8 +444,15 @@ def place_bracket_order(
     """Submit a bracket order (parent + stop loss + optional take profit).
 
     IBKR bracket orders use parentId to link child orders to the parent.
-    The parent is a LMT BUY, children are STP (stop loss) and LMT SELL (take profit).
+    The parent is a LMT BUY, children are STPLMT (stop loss) and LMT SELL (take profit).
     Children only activate after parent fills.
+
+    Stop loss uses STPLMT (stop limit) to prevent panic selling — if price
+    drops below trigger, order becomes a limit sell at trigger price (not
+    market price), reducing slippage. If market continues to fall below that
+    price, the order may not fill — manual intervention needed.
+
+    Take profit uses LMT to lock in gains at a fixed price.
 
     Args:
         client: Connected IBKRClient instance
@@ -453,7 +460,7 @@ def place_bracket_order(
         action: "BUY" or "SELL" (parent direction)
         quantity: Order quantity
         limit_price: Parent order limit price
-        stop_loss_price: Stop loss trigger price
+        stop_loss_price: Stop loss trigger price (also used as limit price for STPLMT)
         take_profit_price: Take profit limit price (0 = skip)
         tif: Time in force for all orders
         timeout: Callback wait timeout
@@ -506,13 +513,14 @@ def place_bracket_order(
     parent.eTradeOnly = False
     parent.firmQuoteOnly = False
 
-    # Stop loss child (STP)
+    # Stop loss child (STPLMT — 止损限价单，防止踩踏)
     stop_loss = IBAPIOrder()
     stop_loss.orderId = sl_id
     stop_loss.action = reverse_action
-    stop_loss.orderType = "STP"
+    stop_loss.orderType = "STPLMT"
     stop_loss.totalQuantity = quantity
-    stop_loss.auxPrice = stop_loss_price
+    stop_loss.auxPrice = stop_loss_price     # 触发价（跌到此价激活）
+    stop_loss.lmtPrice = stop_loss_price    # 下限价（不低于此价成交）
     stop_loss.tif = tif
     stop_loss.parentId = parent_id
     stop_loss.transmit = take_profit_price <= 0  # Transmit if no TP
