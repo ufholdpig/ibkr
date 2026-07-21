@@ -185,7 +185,7 @@ def build_and_submit_order(client: IBKRClient, signal: dict,
                 action=ib_action,
                 order_type="LMT",
                 total_quantity=quantity,
-                limit_price=signal.get("price") or signal.get("target_price") or 0,
+                limit_price=round((signal.get("price") or signal.get("target_price") or 0) * 1.005, 2),
                 tif="DAY",
             )
 
