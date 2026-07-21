@@ -103,17 +103,24 @@ def cmd_account(args):
             acct_logger.info(f"❌ 连接失败: {result.error_message}")
             return 1
 
+        # 账户基础信息（cash/buying_power/net_liquidation 等）+ 持仓（一次调用获取所有）
         account_info = client.get_account_info(timeout=args.timeout)
 
+        # 持仓含实时价格（通过 MarketDataProvider 计算市值和盈亏）
+        # 复用 account_info.positions，避免重复调用 get_account_info（减少一次日志）
+        positions = client.get_positions_with_prices(
+            _positions=account_info.positions, timeout=args.timeout
+        )
+
         positions_lines = ""
-        if account_info.positions:
+        if positions:
             positions_lines = "\n  持仓明细:\n"
-            for p in account_info.positions:
+            for p in positions:
                 side = "多头" if p.quantity > 0 else "空头" if p.quantity < 0 else ""
                 positions_lines += (
                     f"    {p.symbol:<6} {side} {abs(p.quantity):>8.2f}股  "
-                    f"均价 ${p.average_cost:>8.2f}  市值 ${p.market_value:>8.2f}  "
-                    f"浮动盈亏 ${p.unrealized_pnl:>8.2f}  ({p.exchange}/{p.currency})\n"
+                    f"均价 ${p.average_cost:>8.2f}  市值 ${p.market_value:>12,.2f}  "
+                    f"浮动盈亏 ${p.unrealized_pnl:>12,.2f}  ({p.exchange}/{p.currency})\n"
                 )
         else:
             positions_lines = "\n  持仓明细: 无持仓\n"

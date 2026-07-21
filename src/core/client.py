@@ -1024,30 +1024,42 @@ class IBKRClient:
         return bars
 
     def get_positions_with_prices(
-        self, account_id: str, timeout: int = 30
+        self, account_id: str = "", timeout: int = 30,
+        _positions=None  # 可选：直接传入 positions，避免 get_positions_with_prices 内部重复调 get_account_info
     ) -> List[Position]:
         """
         获取持仓（含实时价格）
 
         Args:
-            account_id: 账户 ID
+            account_id: (已废弃，仅保留签名兼容性)
             timeout: 超时时间
+            _positions: (可选) 直接传入 positions 列表，避免重复调用 get_account_info
 
         Returns:
-            List[Position]: 持仓列表（含实时价格）
+            List[Position]: 持仓列表（含实时价格和计算后的市值/pnl）
         """
-        account_info = self.get_account_info(account_id, timeout)
-        positions = account_info.positions
+        if _positions is not None:
+            positions = _positions
+        else:
+            account_info = self.get_account_info(timeout)
+            positions = account_info.positions
 
         if positions and self._api_client and self._api_client.connected:
+            from src.core.market_data import MarketDataProvider
+
+            data_source = getattr(self.config, "market_data_source", "yfinance")
+            mdp = MarketDataProvider(self, data_source=data_source)
             symbols = [pos.symbol for pos in positions]
-            market_data = self.get_market_data(symbols, timeout=10)
+            market_data = mdp.fetch_basic(symbols)  # {symbol: MarketData}
 
             for pos in positions:
-                if pos.symbol in market_data:
-                    pos.market_price = market_data[pos.symbol].get(
-                        "price", pos.market_price
-                    )
+                md = market_data.get(pos.symbol)
+                price = md.price if md else 0.0
+                pos.market_price = price
+                pos.market_value = abs(pos.quantity * price) if price > 0 else 0.0
+                pos.unrealized_pnl = (
+                    (price - pos.average_cost) * pos.quantity if price > 0 else 0.0
+                )
 
         return positions
 
