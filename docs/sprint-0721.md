@@ -126,6 +126,14 @@ place_bracket_order(client, contract, action, quantity,
 - 修复：主单改为 `order_type="LMT"`，与 bracket parent 合并为原子操作
 - 影响：今天手动下的 5 个仓位无 OCO（代码是收盘后 deploy 的）；今晚盘后触发建仓时可验证
 
+**LMT 主单价格逻辑**:
+- `limit_price = signal.price × 1.005`（+0.5% 溢价）
+- 目的：防止轻微跳空高开导致 LMT 不成交（错过趋势）
+- 行为：市价 ≤ limit_price 时立即以市价成交（等于 MKT）；市价 > limit_price 时不成交
+- 符合策略：趋势跟踪不追求精确入场价，错过总好过建错仓
+
+**验证时机**: 今晚 18:00 后 `pre-market_20260722.json` 中查看新信号是否带 OCO 参数
+
 **文件改动**:
 - `config/config.py` — `UniverseSelectorConfig` 新增 `oco_enabled=True`
-- `src/trading/put_order.py` — 建仓成功后调用 `place_bracket_order`
+- `src/trading/put_order.py` — 主单改为 LMT + limit_price×1.005，建仓成功后调用 `place_bracket_order`
