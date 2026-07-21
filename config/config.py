@@ -316,6 +316,7 @@ class IBKRConfig:
     """IBKR 完整配置"""
     market_data_source: str = "auto"  # "auto", "ibkr", "yfinance"
     approval_required: bool = False   # true: 信号写入审批队列，用户 approve 后才提交 IBKR
+    allow_short_selling: bool = False  # true=允许做空，false=Long Only（禁止主动做空）
     gateway: GatewayConfig = field(default_factory=GatewayConfig)
     watch: WatchConfig = field(default_factory=WatchConfig)
     risk_engine: RiskConfig = field(default_factory=RiskConfig)
@@ -338,6 +339,7 @@ class IBKRConfig:
         if market_data_source not in ("auto", "ibkr", "yfinance"):
             raise ValueError(f"market_data_source 必须是 'auto', 'ibkr' 或 'yfinance'，当前值: {market_data_source}")
         approval_required = ibkr_data.get("approval_required", False)
+        allow_short_selling = ibkr_data.get("trading", {}).get("allow_short_selling", False)
         gateway_data = ibkr_data.get("gateway", {})
 
         client_id = gateway_data.get("client_id", "random")
@@ -397,8 +399,9 @@ class IBKRConfig:
         )
 
         return cls(market_data_source=market_data_source, approval_required=approval_required,
-                    gateway=gateway, watch=watch, risk_engine=risk_engine,
-                    universe_selector=universe_selector)
+                  allow_short_selling=allow_short_selling,
+                  gateway=gateway, watch=watch, risk_engine=risk_engine,
+                  universe_selector=universe_selector)
 
 
 # =============================================================================

@@ -1,6 +1,8 @@
 ibkr:
   market_data_source: yfinance
   approval_required: false
+  trading:
+    allow_short_selling: false  # true=允许做空，false=Long Only（禁止主动做空）
   gateway:
     host: 192.168.2.18
     port: 4002

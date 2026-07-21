@@ -20,6 +20,34 @@ from config.config import get_instrument_registry
 logger = get_logger(__name__)
 
 
+def _check_long_only_mode(
+    action: str, symbol: str, qty: int, pos: int
+) -> tuple[bool, str]:
+    """
+    Long Only 模式校验（allow_short_selling=false）：
+    叠加信号后持仓不得为负（不能变为空头）。
+
+    公式: new_pos = pos + qty（BUY时加，SELL时减）
+    只要 new_pos < 0 → 禁止
+
+    Returns:
+        (passed, reason): passed=True 表示通过，reason 非空表示失败原因
+    """
+    if action == "SELL":
+        new_pos = pos - qty
+    elif action == "BUY":
+        new_pos = pos + qty
+    else:
+        return True, ""
+
+    if new_pos < 0:
+        return False, (
+            f"Long Only: {symbol} 持仓 {pos} 股，"
+            f"{action} {qty} 股后变为空头 ({new_pos} 股)，禁止"
+        )
+    return True, ""
+
+
 def build_and_submit_order(client: IBKRClient, signal: dict,
                            positions_map: dict | None = None,
                            risk_engine: RiskEngine | None = None) -> dict:
@@ -259,6 +287,31 @@ def process_signals(client: IBKRClient, signals: list, order_list: list):
                         positions_map[pos.symbol] = pos.quantity
                 except Exception:
                     pass
+
+        # 方向校验: Long Only 模式（allow_short_selling=false）
+        allow_short = getattr(client._full_config, "allow_short_selling", False)
+        if not allow_short:
+            action = signal.get("action", "")
+            symbol = signal.get("symbol", "")
+            qty = signal.get("quantity", 0)
+            pos = positions_map.get(symbol, 0) if positions_map else 0
+            passed, reason = _check_long_only_mode(action, symbol, qty, pos)
+            if not passed:
+                logger.warning(f"⚠️ {reason}")
+                order = {
+                    "order_id": f"local_{i + 1:03d}",
+                    "signal": signal,
+                    "status": "FAILED",
+                    "perm_id": None,
+                    "processed": True,
+                    "filled_qty": 0.0,
+                    "avg_price": 0.0,
+                    "message": reason,
+                    "success": False,
+                    "generated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                }
+                order_list.append(order)
+                continue
 
         # 预检查: SELL 且无持仓 → 跳过
         if signal.get("action") == "SELL" and positions_map is not None:
