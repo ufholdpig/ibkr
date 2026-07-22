@@ -209,14 +209,13 @@ class UniverseSelector:
         # 建仓参数
         opening_cfg = cfg.get("opening", {})
         self.DEFAULT_POSITION_SIZE_PCT: float = opening_cfg.get("default_position_size_pct", 10.0)
-        self.TOP_N: int = opening_cfg.get("top_n", 3)
         
         # 候选池容量（盘后刷新后保留 top N）
         self.CAPACITY: int = cfg.get("capacity", 10)
         
         self._candidate_symbols: Set[str] = set(candidate_symbols or [])
         self.candidates: List[Candidate] = []
-        self._top_n_for_save: List[str] = []  # 总是保存得分最高的 top N（含未通过评审的）
+        self._candidates_for_save: List[str] = []  # 总是保存得分最高的 candidates（含未通过评审的）
         self.last_refresh: Optional[datetime] = None
         
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -228,8 +227,8 @@ class UniverseSelector:
     
     @property
     def top2(self) -> List[str]:
-        """当前排名前2的标的（用于 top2 决策框架）"""
-        return [c.symbol for c in self.candidates[:2]]
+        """当前排名前N的标的（N=MAX_POSITIONS）"""
+        return [c.symbol for c in self.candidates[:self.MAX_POSITIONS]]
     
     @property
     def candidate_symbols(self) -> Set[str]:
@@ -290,8 +289,8 @@ class UniverseSelector:
 
         # 应用容量限制（取 top N）— 基于所有评估过的标的写回YAML
         # 确保即使0只通过评审，top N 仍被保存（供次日观察）
-        top_n = candidates[:self.CAPACITY] if self.CAPACITY else candidates
-        self._top_n_for_save = [c.symbol for c in top_n]
+        candidates_for_save = candidates[:self.CAPACITY] if self.CAPACITY else candidates
+        self._candidates_for_save = [c.symbol for c in candidates_for_save]
         
         self.last_refresh = datetime.now()
         
@@ -457,9 +456,9 @@ class UniverseSelector:
             account_balance: 账户余额（用于计算仓位）
         
         Returns:
-            建仓建议列表（按得分排序，取前 TOP_N）
+            建仓建议列表（按得分排序，取前 MAX_POSITIONS）
         """
-        suggestions = self.candidates[:self.TOP_N]
+        suggestions = self.candidates[:self.MAX_POSITIONS]
         
         self.logger.info(f"建仓建议(共{len(suggestions)}只): {[c.symbol for c in suggestions]}")
         for c in suggestions:
@@ -628,7 +627,6 @@ def create_universe_selector() -> UniverseSelector:
         },
         "opening": {
             "default_position_size_pct": sa_config.default_position_size_pct,
-            "top_n": sa_config.top_n,
         },
     }
 

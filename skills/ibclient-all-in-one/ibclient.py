@@ -402,10 +402,10 @@ def cmd_universe_refresh(args):
 
         # ============================================================
         # scope=full 后写回 top 10（同时更新两个配置文件）
-        # 注意：即使 candidates 为空（0只通过评审），_top_n_for_save 仍包含得分最高的标的
+        # 注意：即使 candidates 为空（0只通过评审），_candidates_for_save 仍包含得分最高的标的
         # ============================================================
         if execution_scope == "full":
-            top_symbols = selector._top_n_for_save
+            top_symbols = selector._candidates_for_save
             logger.info(f"📝 scope=full 写回 top {len(top_symbols)}: {top_symbols}")
 
             # 1. 更新 strong_accumulation.yaml candidate_pool

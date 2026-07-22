@@ -50,7 +50,6 @@ class StrongAccumulationConfig:
     reduce_ratio: float = 0.5
     blacklist: list = field(default_factory=list)
     default_position_size_pct: float = 10.0
-    top_n: int = 3
 
     @property
     def all_sector_leaders(self) -> list[str]:
@@ -100,7 +99,6 @@ class StrongAccumulationConfig:
                 "blacklist": self.blacklist,
                 "opening": {
                     "default_position_size_pct": self.default_position_size_pct,
-                    "top_n": self.top_n,
                 },
             },
         }
@@ -143,7 +141,6 @@ def load_strong_accumulation_config() -> StrongAccumulationConfig:
         reduce_ratio=pos_rev.get("reduce_ratio", 0.5),
         blacklist=univ.get("blacklist", []),
         default_position_size_pct=opening.get("default_position_size_pct", 10.0),
-        top_n=opening.get("top_n", 3),
     )
 
     _STRONG_ACC_CONFIG_CACHE = cfg
@@ -231,7 +228,6 @@ class UniverseSelectorConfig:
     reduce_ratio: float = 0.5
     blacklist: list = field(default_factory=list)
     default_position_size_pct: float = 10.0
-    top_n: int = 3
     oco_enabled: bool = True          # true: 建仓后自动挂止损+止盈 OCO 订单
 
 
@@ -396,7 +392,6 @@ class IBKRConfig:
             reduce_ratio=strong_acc_cfg.reduce_ratio,
             blacklist=strong_acc_cfg.blacklist,
             default_position_size_pct=strong_acc_cfg.default_position_size_pct,
-            top_n=strong_acc_cfg.top_n,
         )
 
         return cls(market_data_source=market_data_source, approval_required=approval_required,
