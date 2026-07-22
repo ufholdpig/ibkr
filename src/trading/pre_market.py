@@ -87,10 +87,12 @@ class PreMarketExecutor:
         total_signals = len(signals)
         processed_signals = sum(1 for s in signals if s.get("processed", False))
         total_orders = len(orders)
-        filled_orders = sum(1 for o in orders if o.get("status") == "FILLED")
-        submitted_orders = sum(1 for o in orders if o.get("status") == "SUBMITTED")
-        failed_orders = sum(1 for o in orders if o.get("status") == "FAILED")
-        unknown_orders = sum(1 for o in orders if o.get("status") == "UNKNOWN")
+        ibkr_filled_statuses = ("Filled", "PartiallyFilled")
+        ibkr_submitted_statuses = ("PreSubmitted", "Submitted", "PendingSubmit")
+        filled_orders = sum(1 for o in orders if o.get("status") in ibkr_filled_statuses)
+        submitted_orders = sum(1 for o in orders if o.get("status") in ibkr_submitted_statuses)
+        failed_orders = sum(1 for o in orders if o.get("status") in ("Rejected", "Cancelled", "Expired"))
+        unknown_orders = sum(1 for o in orders if o.get("status") not in ibkr_filled_statuses + ibkr_submitted_statuses + ("Rejected", "Cancelled", "Expired"))
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         lines = [

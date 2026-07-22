@@ -24,12 +24,12 @@ ibkr:
       - KLAC
       - LRCX
       - CAT
+      - SCHW
       - PG
       - AMD
       - ASML
       - SNOW
       - LLY
-      - JNJ
       trend_entry: []
       trend_entry.1: []
       trend_entry.2: []

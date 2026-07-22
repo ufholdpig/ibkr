@@ -541,7 +541,7 @@ def cmd_universe_refresh(args):
             for sig in signals_to_write:
                 sym = sig["symbol"]
                 strat = sig["strategy_id"]
-                # 检查 order 文件中是否已有 SUBMITTED/FILLED 的同标的同策略订单
+                # 检查 order 文件中是否已有已提交/已成交的同标的同策略订单
                 dup = False
                 if order_file.exists():
                     with open(order_file, "r", encoding="utf-8") as f:
@@ -551,15 +551,18 @@ def cmd_universe_refresh(args):
                             continue
                         for o in section_orders:
                             o_sig = o.get("signal", {})
+                            o_status = o.get("status", "")
+                            # IBKR 原始状态：PreSubmitted/Submitted/PendingSubmit/PartiallyFilled/Filled
                             if (o_sig.get("symbol") == sym
                                     and o_sig.get("strategy_id") == strat
-                                    and o.get("status") in ("SUBMITTED", "FILLED")):
+                                    and o_status in ("PreSubmitted", "Submitted", "PendingSubmit", "PartiallyFilled", "Filled")
+                                    and o.get("success", False)):
                                 dup = True
                                 break
                         if dup:
                             break
                 if dup:
-                    logger.info(f"  ⏭️ 跳过重复信号: {sym} ({strat})，已有 SUBMITTED/FILLED 订单")
+                    logger.info(f"  ⏭️ 跳过重复信号: {sym} ({strat})，已有活跃订单")
                     duplicate_count += 1
                 else:
                     signals_after_dedup.append(sig)

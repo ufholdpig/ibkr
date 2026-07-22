@@ -284,21 +284,11 @@ def build_and_submit_order(client: IBKRClient, signal: dict,
                 else:
                     place_result = place_order(client, order_obj, contract_tse, timeout=30)
 
-            # ── 状态码映射 ──────────────────────────────────────────────
-            # IBKR 返回首字母大写状态（Submitted/Filled/Cancelled）
-            # 转换为全大写统一处理
-            status_map = {
-                "SUBMITTED": "SUBMITTED",
-                "FILLED": "FILLED",
-                "CANCELLED": "CANCELLED",
-                "INACTIVE": "UNKNOWN",
-                "REJECTED": "REJECTED",
-                "UNKNOWN": "UNKNOWN",
-            }
-            mapped_status = status_map.get(place_result.status.upper(), "UNKNOWN")
+            # 直接使用 IBKR 原始状态（PreSubmitted/Submitted/Filled/Cancelled 等）
+            # 不做映射，保留完整信息
 
             return {
-                "status": mapped_status,
+                "status": place_result.status or "Unknown",
                 "message": place_result.error_message or "成功",
                 "perm_id": getattr(place_result, "perm_id", None),
                 "order_id": getattr(place_result, "order_id", None),

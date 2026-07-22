@@ -83,12 +83,12 @@ candidate_pool:
 - KLAC
 - LRCX
 - CAT
+- SCHW
 - PG
 - AMD
 - ASML
 - SNOW
 - LLY
-- JNJ
 conditions:
   operator: AND
   rules:
@@ -130,7 +130,7 @@ risk:
   max_holding_days: 180
 universe_selector:
   capacity: 10
-  max_positions: 2
+  max_positions: 5
   min_positions: 1
   required_passing: 4
   min_score_threshold: 4.0
@@ -150,4 +150,4 @@ universe_selector:
   opening:
     default_position_size_pct: 10.0
     top_n: 3
-_last_refresh: '2026-07-21T20:08:54.987042'
+_last_refresh: '2026-07-22T01:53:22.126067'

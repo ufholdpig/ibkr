@@ -181,9 +181,10 @@ class SignalGenerator:
                 sym = signal_dict.get("symbol", "")
 
                 # 第一层：order 文件去重（权威依据）
-                # 只要该标的有任何订单已 SUBMITTED/FILLED，就不再生成信号
+                # 只要该标的有任何订单已提交/成交，就不再生成信号
                 existing_orders = orders_map.get(sym, [])
-                if any(o.get("status") in ("SUBMITTED", "FILLED") for o in existing_orders):
+                ibkr_active_statuses = ("PreSubmitted", "Submitted", "PendingSubmit", "PartiallyFilled", "Filled")
+                if any(o.get("status") in ibkr_active_statuses for o in existing_orders):
                     statuses = [o.get("status") for o in existing_orders]
                     logger.info("跳过重复信号: %s %s %s — 订单已存在 statuses=%s",
                                 sym, signal_dict.get("action"), signal_dict.get("quantity"),
