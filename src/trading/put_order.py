@@ -13,6 +13,7 @@ import time
 from datetime import datetime
 from src.core.client import IBKRClient, create_contract
 from src.core.orders import place_order, place_bracket_order, Order
+from src.core.market_data import MarketDataProvider
 from src.core.risk_engine import RiskEngine
 from src.core.logger import get_logger
 from config.config import get_instrument_registry
@@ -187,7 +188,32 @@ def build_and_submit_order(client: IBKRClient, signal: dict,
                 total_quantity=quantity,
                 limit_price=round((signal.get("price") or signal.get("target_price") or 0) * 1.005, 2),
                 tif="DAY",
+                order_ref="universe-selector",
             )
+
+            # 降级标记：MKT 降级时不挂 OCO（避免重复建仓）
+            order_type_fallback_mkt = False
+
+            # 如果 signal 没有 price，LMT limit_price=0 会被 IBKR 拒绝
+            # 尝试用 MarketDataProvider 获取当前市价作为 fallback
+            if not signal.get("price") and not signal.get("target_price"):
+                try:
+                    mdp = MarketDataProvider(client=client)
+                    md_map = mdp.fetch_basic([sym])
+                    md = md_map.get(sym) if md_map else None
+                    if md and md.price > 0:
+                        order_obj.limit_price = round(md.price * 1.005, 2)
+                        logger.info(f"📌 信号无 price，用市价 {md.price} → limit_price={order_obj.limit_price}")
+                    else:
+                        # MarketDataProvider 也失败 → 降级 MKT，不挂 OCO
+                        order_obj.order_type = "MKT"
+                        order_type_fallback_mkt = True
+                        logger.warning(f"⚠️ {sym} 无法获取市价，降级为 MKT（无 OCO）")
+                except Exception as e:
+                    # 所有方案失败 → 降级 MKT，不挂 OCO
+                    order_obj.order_type = "MKT"
+                    order_type_fallback_mkt = True
+                    logger.warning(f"⚠️ {sym} 获取市价失败: {e}，降级为 MKT（无 OCO）")
 
             place_result = place_order(client, order_obj, contract, timeout=30)
 
@@ -204,7 +230,7 @@ def build_and_submit_order(client: IBKRClient, signal: dict,
                 )
                 place_result = place_order(client, order_obj, contract_tse, timeout=30)
 
-            if place_result.success:
+            if place_result.success and not order_type_fallback_mkt:
                 # OCO 订单：止损 + 止盈（IBKR bracket order）
                 try:
                     client_cfg = getattr(client, "_full_config", None)

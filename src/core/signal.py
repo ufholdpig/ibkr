@@ -11,7 +11,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any
-from src.core.paths import get_signal_file
+from src.core.paths import get_signal_file, get_order_file
 
 from src.core.strategy import StrategyFactory, TradingSignal
 from src.core.client import IBKRClient
@@ -96,6 +96,25 @@ class SignalGenerator:
             logger.error(f"保存信号文件失败 {self.signal_file}: {e}")
             raise
 
+    def _load_order_file(self):
+        """加载现有订单文件，返回 {symbol: [order, ...]} 映射"""
+        order_file = get_order_file()
+        if not order_file.exists():
+            return {}
+        try:
+            with open(order_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            result = {}
+            for key in ("orders_pre_market", "orders_intra_day"):
+                for o in data.get(key, []):
+                    sig = o.get("signal", {})
+                    sym = sig.get("symbol", "")
+                    if sym:
+                        result.setdefault(sym, []).append(o)
+            return result
+        except Exception:
+            return {}
+
     def _convert_signal_to_dict(self, signal) -> Dict[str, Any]:
         return convert_signal_to_dict(signal)
 
@@ -150,21 +169,37 @@ class SignalGenerator:
             # 加载现有信号
             signal_data = self._load_signal_file()
 
+            # 加载现有订单（权威去重依据：SUBMITTED/FILLED = 已成功，不重复）
+            orders_map = self._load_order_file()
+
             # 转换信号格式并去重
             count = 0
             signal_key = f"signals_{signal_type.replace('-', '_')}"
 
             for signal in signals:
                 signal_dict = self._convert_signal_to_dict(signal)
+                sym = signal_dict.get("symbol", "")
+
+                # 第一层：order 文件去重（权威依据）
+                # 只要该标的有任何订单已 SUBMITTED/FILLED，就不再生成信号
+                existing_orders = orders_map.get(sym, [])
+                if any(o.get("status") in ("SUBMITTED", "FILLED") for o in existing_orders):
+                    statuses = [o.get("status") for o in existing_orders]
+                    logger.info("跳过重复信号: %s %s %s — 订单已存在 statuses=%s",
+                                sym, signal_dict.get("action"), signal_dict.get("quantity"),
+                                statuses)
+                    continue
+
+                # 第二层：signal 文件去重（同一天内同一信号不重复生成）
                 dup = any(
-                    s.get("symbol") == signal_dict["symbol"]
+                    s.get("symbol") == sym
                     and s.get("action") == signal_dict["action"]
                     and s.get("quantity") == signal_dict["quantity"]
                     for s in signal_data[signal_key]
                 )
                 if dup:
-                    logger.info("跳过重复信号: %s %s x%s 已存在",
-                                signal_dict["symbol"], signal_dict["action"], signal_dict["quantity"])
+                    logger.info("跳过重复信号: %s %s x%s — 同一天已存在",
+                                sym, signal_dict.get("action"), signal_dict.get("quantity"))
                     continue
                 signal_data[signal_key].append(signal_dict)
                 count += 1
