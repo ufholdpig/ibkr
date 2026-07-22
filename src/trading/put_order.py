@@ -205,10 +205,10 @@ def build_and_submit_order(client: IBKRClient, signal: dict,
                         order_obj.limit_price = round(md.price * 1.005, 2)
                         logger.info(f"📌 信号无 price，用市价 {md.price} → limit_price={order_obj.limit_price}")
                     else:
-                        logger.warning(f"⚠️ {sym} 无法获取市价（MDP 返回空），跳过信号")
+                        logger.warning(f"⚠️ {symbol} 无法获取市价（MDP 返回空），跳过信号")
                         return {
                             "status": "SKIPPED",
-                            "message": f"{sym} 无法获取市价，跳过信号",
+                            "message": f"{symbol} 无法获取市价，跳过信号",
                             "perm_id": None,
                             "order_id": None,
                             "filled_qty": 0.0,
@@ -216,10 +216,10 @@ def build_and_submit_order(client: IBKRClient, signal: dict,
                             "success": False,
                         }
                 except Exception as e:
-                    logger.warning(f"⚠️ {sym} MarketDataProvider 失败: {e}，跳过信号")
+                    logger.warning(f"⚠️ {symbol} MarketDataProvider 失败: {e}，跳过信号")
                     return {
                         "status": "SKIPPED",
-                        "message": f"{sym} MarketDataProvider 失败: {e}，跳过信号",
+                        "message": f"{symbol} MarketDataProvider 失败: {e}，跳过信号",
                         "perm_id": None,
                         "order_id": None,
                         "filled_qty": 0.0,
