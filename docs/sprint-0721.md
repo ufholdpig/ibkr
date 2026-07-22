@@ -126,6 +126,157 @@ place_bracket_order(client, contract, action, quantity,
 - 修复：主单改为 `order_type="LMT"`，与 bracket parent 合并为原子操作
 - 影响：今天手动下的 5 个仓位无 OCO（代码是收盘后 deploy 的）；今晚盘后触发建仓时可验证
 
+**LMT 主单价格逻辑**:
+- `limit_price = signal.price × 1.005`（+0.5% 溢价）
+- 目的：防止轻微跳空高开导致 LMT 不成交（错过趋势）
+- 行为：市价 ≤ limit_price 时立即以市价成交（等于 MKT）；市价 > limit_price 时不成交
+- 符合策略：趋势跟踪不追求精确入场价，错过总好过建错仓
+
+**验证时机**: 今晚 18:00 后 `pre-market_20260722.json` 中查看新信号是否带 OCO 参数
+
 **文件改动**:
 - `config/config.py` — `UniverseSelectorConfig` 新增 `oco_enabled=True`
-- `src/trading/put_order.py` — 建仓成功后调用 `place_bracket_order`
+- `src/trading/put_order.py` — 主单改为 LMT + limit_price×1.005，建仓成功后调用 `place_bracket_order`
+
+---
+
+### 4.3 Debug 修复 — 07-22 盘后验证
+
+**问题1**: `'list' object has no attribute 'get'` 错误
+
+**原因**: `process_signals()` 被错误传入 `orders` 列表作为第三个参数
+```python
+# 旧代码（错误）
+process_signals(client, unprocessed, orders)
+
+# 新代码（正确）
+new_orders = process_signals(client, unprocessed)
+```
+
+**修复**: 
+- `pre_market.py:200` — 移除错误参数，正确处理返回值
+- `intra_day.py:85` — 同样修复
+
+---
+
+**问题2**: MarketDataProvider IBKR→yfinance 回退失败
+
+**原因**: IBKR 返回空 dict `{}` 而非抛异常，导致 `auto` 模式无法触发回退
+```python
+# 旧代码（错误）
+result = self._fetch_basic_ibkr(symbols)
+if result:
+    return result
+# 空结果时直接返回空，不回退 yfinance
+
+# 新代码（正确）
+result = self._fetch_basic_ibkr(symbols)
+if result:
+    return result
+logger.warning("IBKR 基础行情返回空，回退 yfinance")
+# 继续执行 yfinance 回退
+```
+
+**修复**: `market_data.py:39-42` — 空结果时显式回退
+
+---
+
+**问题3**: yfinance 盘后获取不到价格
+
+**原因**: 旧配置 `period="1d", interval="1m"` 在盘后（18:00 ET）无法获取分钟级数据
+```python
+# 旧代码（错误）
+hist = ticker.history(period="1d", interval="1m")
+
+# 新代码（正确）
+hist = ticker.history(period="5d", interval="1d")
+```
+
+**修复**: `market_data.py:86` — 改为日线级别，取最后一根收盘价作为参考价
+
+---
+
+**问题4**: 订单未追加到 order_20260722.json
+
+**原因**: `process_signals()` 返回新订单列表，但旧代码未正确追加到 order_data
+```python
+# 旧代码（错误）
+process_signals(client, unprocessed, orders)  # orders 未被修改
+
+# 新代码（正确）
+new_orders = process_signals(client, unprocessed)
+for order in new_orders:
+    orders.append({...})  # 正确追加
+```
+
+**修复**: 
+- `pre_market.py:202-223` — 追加新订单到 order_data
+- `intra_day.py:87-114` — 同样修复
+
+---
+
+**问题5**: Bracket Order 重复提交父单
+
+**原因**: 旧代码先 `place_order()` 提交主单，再 `place_bracket_order()` 提交 bracket order（包含父单）
+```python
+# 旧代码（错误）
+place_result = place_order(client, order_obj, contract, timeout=30)  # 主单
+if place_result.success:
+    place_bracket_order(...)  # 再次提交父单 + 子单
+
+# 新代码（正确）
+if has_price:
+    bracket_result = place_bracket_order(...)  # 直接提交 bracket order
+    place_result = bracket_result.get("parent_result")
+```
+
+**修复**: `put_order.py:233-262` — 直接使用 bracket order，移除重复的 `place_order()`
+
+---
+
+**问题6**: 订单状态显示 UNKNOWN
+
+**原因**: IBKR 返回首字母大写状态（`Submitted`），但 `status_map` 使用全大写（`SUBMITTED`）
+```python
+# 旧代码（错误）
+status_map = {"SUBMITTED": "SUBMITTED", ...}
+mapped_status = status_map.get(place_result.status, "UNKNOWN")  # "Submitted" 匹配失败
+
+# 新代码（正确）
+mapped_status = status_map.get(place_result.status.upper(), "UNKNOWN")  # "SUBMITTED" 匹配成功
+```
+
+**修复**: `put_order.py:298` — 添加 `.upper()` 转换
+
+---
+
+**验证结果**（07-22 00:10）:
+
+```
+📊 候选池评估报告 — 
+   建仓建议: ['AMAT', 'KLAC', 'LRCX', 'CAT']
+   跳过重复信号: KLAC, AMAT, LRCX (已有 SUBMITTED 订单)
+   ✅ 去重完成：4 → 1（过滤 3 个重复）
+
+📌 信号无 price，用市价 889.969970703125 → limit_price=894.42
+📌 OCO: CAT LMT=894.42 SL=804.98 TP=1073.3
+✅ Bracket 订单已提交: parent=3, SL=4, TP=5
+```
+
+**订单状态**（`get-opened-orders`）:
+
+| PermID | Symbol | Action | Type | Status |
+|--------|--------|--------|------|--------|
+| 1211088211 | CAT | BUY 10 | LMT | PreSubmitted |
+| 1211088212 | CAT | SELL 10 | STP LMT | PreSubmitted |
+| 1211088213 | CAT | SELL 10 | LMT | PreSubmitted |
+
+- 1211088211 = 主订单 (parent) @ LMT 894.42
+- 1211088212 = 止损单 (SL) @ STP LMT 804.98
+- 1211088213 = 止盈单 (TP) @ LMT 1073.3
+
+**文件改动**:
+- `src/trading/pre_market.py` — 修复 process_signals 返回值处理
+- `src/trading/intra_day.py` — 同样修复
+- `src/core/market_data.py` — 修复 IBKR 空结果回退 + yfinance 盘后获取
+- `src/trading/put_order.py` — 修复 fallback 链 + bracket order + 状态码映射

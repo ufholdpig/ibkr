@@ -13,6 +13,7 @@ import time
 from datetime import datetime
 from src.core.client import IBKRClient, create_contract
 from src.core.orders import place_order, place_bracket_order, Order
+from src.core.market_data import MarketDataProvider
 from src.core.risk_engine import RiskEngine
 from src.core.logger import get_logger
 from config.config import get_instrument_registry
@@ -187,9 +188,78 @@ def build_and_submit_order(client: IBKRClient, signal: dict,
                 total_quantity=quantity,
                 limit_price=round((signal.get("price") or signal.get("target_price") or 0) * 1.005, 2),
                 tif="DAY",
+                order_ref="universe-selector",
             )
 
-            place_result = place_order(client, order_obj, contract, timeout=30)
+            # ── 信号无 price 时的 fallback 链 ──────────────────────────
+            # signal 有 price → LMT
+            # signal 无 price → MDP 拉市价 → LMT（limit_price = price × 1.005）
+            # MDP 也失败 → skip，不生成订单（下次 universe-refresh 继续测试 LMT）
+            if not signal.get("price") and not signal.get("target_price"):
+                try:
+                    data_source = getattr(client.config, "market_data_source", "yfinance")
+                    mdp = MarketDataProvider(client=client, data_source=data_source)
+                    md_map = mdp.fetch_basic([sym])
+                    md = md_map.get(sym) if md_map else None
+                    if md and md.price > 0:
+                        order_obj.limit_price = round(md.price * 1.005, 2)
+                        logger.info(f"📌 信号无 price，用市价 {md.price} → limit_price={order_obj.limit_price}")
+                    else:
+                        logger.warning(f"⚠️ {sym} 无法获取市价（MDP 返回空），跳过信号")
+                        return {
+                            "status": "SKIPPED",
+                            "message": f"{sym} 无法获取市价，跳过信号",
+                            "perm_id": None,
+                            "order_id": None,
+                            "filled_qty": 0.0,
+                            "avg_price": 0.0,
+                            "success": False,
+                        }
+                except Exception as e:
+                    logger.warning(f"⚠️ {sym} MarketDataProvider 失败: {e}，跳过信号")
+                    return {
+                        "status": "SKIPPED",
+                        "message": f"{sym} MarketDataProvider 失败: {e}，跳过信号",
+                        "perm_id": None,
+                        "order_id": None,
+                        "filled_qty": 0.0,
+                        "avg_price": 0.0,
+                        "success": False,
+                    }
+            # ── end fallback 链 ─────────────────────────────────────────
+
+            has_price = order_obj.limit_price > 0
+
+            if has_price:
+                # 有价格：LMT + bracket order（父+子同时提交）
+                try:
+                    client_cfg = getattr(client, "_full_config", None)
+                    us_cfg = getattr(client_cfg, "universe_selector", None)
+                    sl_pct = getattr(us_cfg, "stop_loss_pct", -10.0) if us_cfg else -10.0
+                    tp_pct = getattr(us_cfg, "take_profit_pct", 20.0) if us_cfg else 20.0
+                    sl_price = round(order_obj.limit_price * (1 + sl_pct / 100), 2)
+                    tp_price = round(order_obj.limit_price * (1 + tp_pct / 100), 2)
+                    logger.info(f"📌 OCO: {symbol} LMT={order_obj.limit_price} SL={sl_price} TP={tp_price}")
+                    bracket_result = place_bracket_order(
+                        client=client,
+                        contract=contract,
+                        action=ib_action,
+                        quantity=quantity,
+                        limit_price=order_obj.limit_price,
+                        stop_loss_price=sl_price,
+                        take_profit_price=tp_price,
+                        tif="GTC",
+                    )
+                    place_result = bracket_result.get("parent_result")
+                except Exception as e:
+                    logger.warning(f"⚠️ bracket order 失败: {e}")
+                    place_result = place_order(client, order_obj, contract, timeout=30)
+            else:
+                # 无价格：降级 MKT
+                order_obj.order_type = "MKT"
+                order_obj.limit_price = 0
+                logger.warning(f"⚠️ {symbol} 无法获取市价，降级为 MKT（无 OCO）")
+                place_result = place_order(client, order_obj, contract, timeout=30)
 
             # 如果 SMART/USD 找不到证券定义，自动尝试 TSE/CAD
             if (not place_result.success and exchange == "SMART" and currency == "USD"
@@ -202,61 +272,58 @@ def build_and_submit_order(client: IBKRClient, signal: dict,
                     exchange="TSE",
                     currency="CAD",
                 )
-                place_result = place_order(client, order_obj, contract_tse, timeout=30)
+                if has_price:
+                    bracket_result = place_bracket_order(
+                        client=client,
+                        contract=contract_tse,
+                        action=ib_action,
+                        quantity=quantity,
+                        limit_price=order_obj.limit_price,
+                        stop_loss_price=sl_price,
+                        take_profit_price=tp_price,
+                        tif="GTC",
+                    )
+                    place_result = bracket_result.get("parent_result")
+                else:
+                    place_result = place_order(client, order_obj, contract_tse, timeout=30)
 
-            if place_result.success:
-                # OCO 订单：止损 + 止盈（IBKR bracket order）
-                try:
-                    client_cfg = getattr(client, "_full_config", None)
-                    us_cfg = getattr(client_cfg, "universe_selector", None)
-                    if us_cfg and getattr(us_cfg, "oco_enabled", True):
-                        sl_pct = getattr(us_cfg, "stop_loss_pct", -10.0)   # e.g. -10 → -10%
-                        tp_pct = getattr(us_cfg, "take_profit_pct", 20.0)  # e.g. 20 → +20%
-                        fill_price = place_result.avg_fill_price or place_result.filled_qty
-                        if fill_price > 0:
-                            sl_price = round(fill_price * (1 + sl_pct / 100), 2)
-                            tp_price = round(fill_price * (1 + tp_pct / 100), 2)
-                            logger.info(
-                                f"📌 OCO 挂单: {symbol} SL={sl_price} ({sl_pct}%), "
-                                f"TP={tp_price} ({tp_pct}%)"
-                            )
-                            place_bracket_order(
-                                client=client,
-                                contract=contract,
-                                action=ib_action,
-                                quantity=quantity,
-                                limit_price=fill_price,
-                                stop_loss_price=sl_price,
-                                take_profit_price=tp_price,
-                                tif="GTC",
-                                timeout=15,
-                            )
-                except Exception as e:
-                    logger.warning(f"⚠️ OCO 订单提交失败（不阻断主单）: {e}")
+            # ── 状态码映射 ──────────────────────────────────────────────
+            # IBKR 返回首字母大写状态（Submitted/Filled/Cancelled）
+            # 转换为全大写统一处理
+            status_map = {
+                "SUBMITTED": "SUBMITTED",
+                "FILLED": "FILLED",
+                "CANCELLED": "CANCELLED",
+                "INACTIVE": "UNKNOWN",
+                "REJECTED": "REJECTED",
+                "UNKNOWN": "UNKNOWN",
+            }
+            mapped_status = status_map.get(place_result.status.upper(), "UNKNOWN")
 
-            server_status = getattr(place_result, "status", "Unknown")
             return {
-                "perm_id": getattr(place_result, "perm_id", 0),
-                "order_id": getattr(place_result, "order_id", 0),
-                "filled_qty": getattr(place_result, "filled_qty", 0.0),
-                "avg_price": getattr(place_result, "avg_fill_price", 0.0),
-                "status": _get_execution_status(server_status),
-                "message": getattr(place_result, "message", ""),
-                "success": _is_success(server_status),
+                "status": mapped_status,
+                "message": place_result.error_message or "成功",
+                "perm_id": getattr(place_result, "perm_id", None),
+                "order_id": getattr(place_result, "order_id", None),
+                "filled_qty": place_result.filled_qty or 0.0,
+                "avg_price": place_result.avg_fill_price or 0.0,
+                "success": place_result.success,
             }
 
         except Exception as e:
-            error_msg = f"订单提交失败: {e}"
-            logger.error(f"❌ {error_msg}")
-            return {
-                "status": "FAILED",
-                "message": error_msg,
-                "perm_id": None,
-                "order_id": None,
-                "filled_qty": 0.0,
-                "avg_price": 0.0,
-                "success": False,
-            }
+            error_msg = str(e)
+            if "market data utility" in error_msg.lower() or "no data" in error_msg.lower():
+                logger.warning(f"⚠️ {symbol} MarketDataProvider 失败: {e}")
+                return {
+                    "status": "UNKNOWN",
+                    "message": f"MarketDataProvider 失败: {e}",
+                    "perm_id": None,
+                    "order_id": None,
+                    "filled_qty": 0.0,
+                    "avg_price": 0.0,
+                    "success": False,
+                }
+            raise
 
     except Exception as e:
         error_msg = f"订单处理异常: {e}"
