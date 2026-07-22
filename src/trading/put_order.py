@@ -191,11 +191,22 @@ def build_and_submit_order(client: IBKRClient, signal: dict,
                 order_ref="universe-selector",
             )
 
-            # ── 信号无 price 时的 fallback 链 ──────────────────────────
-            # signal 有 price → LMT
-            # signal 无 price → MDP 拉市价 → LMT（limit_price = price × 1.005）
-            # MDP 也失败 → skip，不生成订单（下次 universe-refresh 继续测试 LMT）
-            if not signal.get("price") and not signal.get("target_price"):
+            # ── 价格获取逻辑 ──────────────────────────────────────────
+            # oco_enabled=false: 总是 MKT（不挂 OCO）
+            # oco_enabled=true:  尝试 MDP 获取价格
+            #   - 成功 → LMT + bracket order
+            #   - 失败 → 降级 MKT（不挂 OCO）
+            client_cfg = getattr(client, "_full_config", None)
+            us_cfg = getattr(client_cfg, "universe_selector", None)
+            oco_enabled = getattr(us_cfg, "oco_enabled", True) if us_cfg else True
+
+            if not oco_enabled:
+                # OCO 关闭：总是 MKT
+                order_obj.order_type = "MKT"
+                order_obj.limit_price = 0
+                logger.info(f"📌 {symbol} OCO 关闭，使用 MKT")
+            else:
+                # OCO 开启：尝试 MDP 获取市价
                 try:
                     data_source = getattr(client.config, "market_data_source", "yfinance")
                     mdp = MarketDataProvider(client=client, data_source=data_source)
@@ -203,38 +214,24 @@ def build_and_submit_order(client: IBKRClient, signal: dict,
                     md = md_map.get(sym) if md_map else None
                     if md and md.price > 0:
                         order_obj.limit_price = round(md.price * 1.005, 2)
-                        logger.info(f"📌 信号无 price，用市价 {md.price} → limit_price={order_obj.limit_price}")
+                        logger.info(f"📌 MDP 获取市价 {md.price} → limit_price={order_obj.limit_price}")
                     else:
-                        logger.warning(f"⚠️ {symbol} 无法获取市价（MDP 返回空），跳过信号")
-                        return {
-                            "status": "SKIPPED",
-                            "message": f"{symbol} 无法获取市价，跳过信号",
-                            "perm_id": None,
-                            "order_id": None,
-                            "filled_qty": 0.0,
-                            "avg_price": 0.0,
-                            "success": False,
-                        }
+                        # MDP 返回空 → 降级 MKT（不挂 OCO）
+                        order_obj.order_type = "MKT"
+                        order_obj.limit_price = 0
+                        logger.warning(f"⚠️ {symbol} MDP 返回空，降级为 MKT（无 OCO）")
                 except Exception as e:
-                    logger.warning(f"⚠️ {symbol} MarketDataProvider 失败: {e}，跳过信号")
-                    return {
-                        "status": "SKIPPED",
-                        "message": f"{symbol} MarketDataProvider 失败: {e}，跳过信号",
-                        "perm_id": None,
-                        "order_id": None,
-                        "filled_qty": 0.0,
-                        "avg_price": 0.0,
-                        "success": False,
-                    }
-            # ── end fallback 链 ─────────────────────────────────────────
+                    # MDP 失败 → 降级 MKT（不挂 OCO）
+                    order_obj.order_type = "MKT"
+                    order_obj.limit_price = 0
+                    logger.warning(f"⚠️ {symbol} MarketDataProvider 失败: {e}，降级为 MKT（无 OCO）")
+            # ── end 价格获取逻辑 ────────────────────────────────────────
 
             has_price = order_obj.limit_price > 0
 
             if has_price:
                 # 有价格：LMT + bracket order（父+子同时提交）
                 try:
-                    client_cfg = getattr(client, "_full_config", None)
-                    us_cfg = getattr(client_cfg, "universe_selector", None)
                     sl_pct = getattr(us_cfg, "stop_loss_pct", -10.0) if us_cfg else -10.0
                     tp_pct = getattr(us_cfg, "take_profit_pct", 20.0) if us_cfg else 20.0
                     sl_price = round(order_obj.limit_price * (1 + sl_pct / 100), 2)
