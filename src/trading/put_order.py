@@ -289,13 +289,19 @@ def build_and_submit_order(client: IBKRClient, signal: dict,
             # 转换为全大写统一处理
             status_map = {
                 "SUBMITTED": "SUBMITTED",
+                "SUBMIT": "SUBMITTED",
                 "FILLED": "FILLED",
+                "FILL": "FILLED",
                 "CANCELLED": "CANCELLED",
+                "CANCEL": "CANCELLED",
                 "INACTIVE": "UNKNOWN",
                 "REJECTED": "REJECTED",
                 "UNKNOWN": "UNKNOWN",
             }
-            mapped_status = status_map.get(place_result.status.upper(), "UNKNOWN")
+            raw_status = place_result.status or "Submitted"
+            logger.debug(f"📊 原始状态: {raw_status}")
+            mapped_status = status_map.get(raw_status.upper(), "UNKNOWN")
+            logger.debug(f"📊 映射后状态: {mapped_status}")
 
             return {
                 "status": mapped_status,
